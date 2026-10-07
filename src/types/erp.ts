@@ -164,3 +164,10 @@ export interface VolunteerEntityRecord extends BaseEntity {
   notes?: string;
   isActive: boolean;
 }
+
+export interface MapDefaultLocationConfig {
+  locationName: string;
+  lat: number;
+  lng: number;
+  zoom: number;
+}

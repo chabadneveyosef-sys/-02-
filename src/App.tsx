@@ -31,6 +31,10 @@ import {
   LogOut,
   Lock,
   LayoutDashboard,
+  Undo2,
+  Redo2,
+  Keyboard,
+  UserPlus,
 } from 'lucide-react';
 import {
   auth,
@@ -46,11 +50,14 @@ import {
   generateUuidV7,
   fromGregorianDate,
   formatAgorotToIls,
+  encryptSensitiveString,
+  decryptSensitiveString,
 } from './lib/erp-core';
 import {
   getDefaultPermissionsForRole,
   hasDomainAccess,
   RoleTemplateName,
+  ROLE_TEMPLATE_LABELS,
   PermissionDomain,
   AccessLevel,
   SensitivePermission,
@@ -65,8 +72,10 @@ import {
   FinancialTransactionRecord,
   DonorContactRecord,
   VolunteerEntityRecord,
+  MapDefaultLocationConfig,
 } from './types/erp';
 import {
+  buildSeedUsers,
   buildSeedTemplates,
   buildSeedAnnualActivities,
   buildSeedTasks,
@@ -96,11 +105,24 @@ export default function App() {
   const [fbUser, setFbUser] = useState<FirebaseUser | null>(null);
   const [authReady, setAuthReady] = useState(false);
 
-  // Local username/password login support alongside Google Auth
+  // Local username/password login & registration support alongside Google Auth
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [usernameInput, setUsernameInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
-  const [localLoggedInName, setLocalLoggedInName] = useState<string | null>(null);
+  const [regDisplayNameInput, setRegDisplayNameInput] = useState('');
+  const [regEmailInput, setRegEmailInput] = useState('');
+  const [regRoleInput, setRegRoleInput] = useState<RoleTemplateName>('coordinator');
+  const [localLoggedInUserId, setLocalLoggedInUserId] = useState<string | null>('local-admin');
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [shortcutToast, setShortcutToast] = useState<string | null>(null);
+  const [showShortcutsModal, setShowShortcutsModal] = useState(false);
+
+  const triggerShortcutToast = useCallback((msg: string) => {
+    setShortcutToast(msg);
+    window.setTimeout(() => {
+      setShortcutToast((prev) => (prev === msg ? null : prev));
+    }, 3000);
+  }, []);
 
   const handleGoogleSignIn = async () => {
     setLoginError(null);
@@ -125,14 +147,15 @@ export default function App() {
 
   // Repository State (lazy-initialized once from local cache or seed data for zero-latency / offline support)
   const seedInitial = useMemo(() => {
+    const usrs = buildSeedUsers();
     const tpls = buildSeedTemplates();
     const acts = buildSeedAnnualActivities(tpls);
     const tsks = buildSeedTasks(acts);
     const dAndTx = buildSeedDonorsAndTransactions();
-    return { tpls, acts, tsks, dAndTx };
+    return { usrs, tpls, acts, tsks, dAndTx };
   }, []);
 
-  const [users, setUsers] = useState<UserRecord[]>([]);
+  const [users, setUsers] = useState<UserRecord[]>(() => seedInitial.usrs);
   const [auditLogs, setAuditLogs] = useState<AuditLogRecord[]>([]);
   const [templates, setTemplates] = useState<DynamicTemplateRecord[]>(() => seedInitial.tpls);
   const [activities, setActivities] = useState<AnnualActivityRecord[]>(() => seedInitial.acts);
@@ -146,6 +169,104 @@ export default function App() {
   const [communityEntities, setCommunityEntities] = useState<VolunteerEntityRecord[]>(
     () => seedInitial.dAndTx.communityEntities
   );
+  const [defaultMapLocation, setDefaultMapLocation] = useState<MapDefaultLocationConfig>({
+    locationName: 'חיפה - שכונת נווה יוסף (רחוב יד לבנים)',
+    lat: 32.7842,
+    lng: 35.0195,
+    zoom: 16,
+  });
+
+  // Undo / Redo Snapshot Stack (Ctrl+Z / Ctrl+Y)
+  interface RepositorySnapshot {
+    label: string;
+    activities: AnnualActivityRecord[];
+    tasks: TaskNodeRecord[];
+    transactions: FinancialTransactionRecord[];
+    donors: DonorContactRecord[];
+    communityEntities: VolunteerEntityRecord[];
+    defaultMapLocation: MapDefaultLocationConfig;
+  }
+  const [undoStack, setUndoStack] = useState<RepositorySnapshot[]>([]);
+  const [redoStack, setRedoStack] = useState<RepositorySnapshot[]>([]);
+
+  const recordUndoSnapshot = useCallback(
+    (label: string) => {
+      setUndoStack((prev) => [
+        ...prev.slice(-19),
+        {
+          label,
+          activities,
+          tasks,
+          transactions,
+          donors,
+          communityEntities,
+          defaultMapLocation,
+        },
+      ]);
+      setRedoStack([]);
+    },
+    [activities, tasks, transactions, donors, communityEntities, defaultMapLocation]
+  );
+
+  const handleUndo = useCallback(() => {
+    setUndoStack((prevUndo) => {
+      if (prevUndo.length === 0) {
+        triggerShortcutToast('אין פעולות נוספות לביטול (Ctrl+Z)');
+        return prevUndo;
+      }
+      const last = prevUndo[prevUndo.length - 1];
+      setRedoStack((prevRedo) => [
+        ...prevRedo,
+        {
+          label: last.label,
+          activities,
+          tasks,
+          transactions,
+          donors,
+          communityEntities,
+          defaultMapLocation,
+        },
+      ]);
+      setActivities(last.activities);
+      setTasks(last.tasks);
+      setTransactions(last.transactions);
+      setDonors(last.donors);
+      setCommunityEntities(last.communityEntities);
+      setDefaultMapLocation(last.defaultMapLocation);
+      triggerShortcutToast(`בוטל (Ctrl+Z): ${last.label}`);
+      return prevUndo.slice(0, -1);
+    });
+  }, [activities, tasks, transactions, donors, communityEntities, defaultMapLocation, triggerShortcutToast]);
+
+  const handleRedo = useCallback(() => {
+    setRedoStack((prevRedo) => {
+      if (prevRedo.length === 0) {
+        triggerShortcutToast('אין פעולות לביצוע מחדש (Ctrl+Y)');
+        return prevRedo;
+      }
+      const next = prevRedo[prevRedo.length - 1];
+      setUndoStack((prevUndo) => [
+        ...prevUndo,
+        {
+          label: next.label,
+          activities,
+          tasks,
+          transactions,
+          donors,
+          communityEntities,
+          defaultMapLocation,
+        },
+      ]);
+      setActivities(next.activities);
+      setTasks(next.tasks);
+      setTransactions(next.transactions);
+      setDonors(next.donors);
+      setCommunityEntities(next.communityEntities);
+      setDefaultMapLocation(next.defaultMapLocation);
+      triggerShortcutToast(`שוחזר (Ctrl+Y): ${next.label}`);
+      return prevRedo.slice(0, -1);
+    });
+  }, [activities, tasks, transactions, donors, communityEntities, defaultMapLocation, triggerShortcutToast]);
 
   // Load offline repository cache on boot
   useEffect(() => {
@@ -153,12 +274,14 @@ export default function App() {
       const cached = localStorage.getItem(LOCAL_CACHE_KEY);
       if (cached) {
         const parsed = JSON.parse(cached);
+        if (parsed.users?.length) setUsers(parsed.users);
         if (parsed.templates?.length) setTemplates(parsed.templates);
         if (parsed.activities?.length) setActivities(parsed.activities);
         if (parsed.tasks?.length) setTasks(parsed.tasks);
         if (parsed.transactions?.length) setTransactions(parsed.transactions);
         if (parsed.donors?.length) setDonors(parsed.donors);
         if (parsed.communityEntities?.length) setCommunityEntities(parsed.communityEntities);
+        if (parsed.defaultMapLocation?.lat) setDefaultMapLocation(parsed.defaultMapLocation);
       }
     } catch {
       // Ignore corrupt local cache
@@ -171,36 +294,84 @@ export default function App() {
       localStorage.setItem(
         LOCAL_CACHE_KEY,
         JSON.stringify({
+          users,
           templates,
           activities,
           tasks,
           transactions,
           donors,
           communityEntities,
+          defaultMapLocation,
         })
       );
     } catch {
       // Ignore quota errors
     }
-  }, [templates, activities, tasks, transactions, donors, communityEntities]);
+  }, [users, templates, activities, tasks, transactions, donors, communityEntities, defaultMapLocation]);
 
-  // Global keyboard shortcuts: Ctrl+K (Command Palette) & Ctrl+N (New entry in active module)
+  // Global keyboard shortcuts: Ctrl+Z (Undo), Ctrl+Y / Ctrl+Shift+Z (Redo), Ctrl+S (Save/Sync), Ctrl+K / Ctrl+F (Search), Ctrl+N (New), Alt+1..7 (Tabs), ? (Shortcuts Help)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+      const target = e.target as HTMLElement | null;
+      const isEditableInput =
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable);
+
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+        if (!isEditableInput) {
+          e.preventDefault();
+          handleUndo();
+        }
+      } else if (
+        ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') ||
+        ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'z')
+      ) {
+        if (!isEditableInput) {
+          e.preventDefault();
+          handleRedo();
+        }
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        triggerShortcutToast('כל הנתונים נשמרו אוטומטית בזיכרון המקומי ובענן (Ctrl+S)');
+      } else if (
+        (e.ctrlKey || e.metaKey) &&
+        (e.key.toLowerCase() === 'k' || e.key.toLowerCase() === 'f')
+      ) {
         e.preventDefault();
         setShowCommandPalette((prev) => !prev);
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') {
         e.preventDefault();
         setShowCommandPalette(true);
         setCommandQuery('חדש');
+      } else if (e.altKey && ['1', '2', '3', '4', '5', '6', '7'].includes(e.key)) {
+        e.preventDefault();
+        const tabsOrder: NavTab[] = [
+          'dashboard',
+          'annual_plan',
+          'tasks_dag',
+          'finances',
+          'crm_donors',
+          'gis_map',
+          'rbac_settings',
+        ];
+        const idx = Number(e.key) - 1;
+        if (tabsOrder[idx]) {
+          setActiveTab(tabsOrder[idx]);
+        }
+      } else if (!isEditableInput && (e.key === '?' || (e.shiftKey && e.key === '/'))) {
+        e.preventDefault();
+        setShowShortcutsModal((prev) => !prev);
       } else if (e.key === 'Escape') {
         setShowCommandPalette(false);
+        setShowShortcutsModal(false);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [handleUndo, handleRedo, triggerShortcutToast]);
 
   // Auth listener & User Profile Synchronization
   useEffect(() => {
@@ -267,8 +438,16 @@ export default function App() {
   }, [users]);
 
   const currentUser: ParsedUserRecord = useMemo(() => {
-    const found = parsedUsers.find((u) => u.uid === fbUser?.uid);
-    if (found) return found;
+    if (fbUser) {
+      const foundByUid = parsedUsers.find((u) => u.uid === fbUser.uid);
+      if (foundByUid) return foundByUid;
+    }
+    if (localLoggedInUserId) {
+      const foundLocal = parsedUsers.find(
+        (u) => u.id === localLoggedInUserId || u.uid === localLoggedInUserId
+      );
+      if (foundLocal) return foundLocal;
+    }
     const isPrimaryAdmin = !fbUser || fbUser.email === 'chabadneveyosef@gmail.com';
     const role: RoleTemplateName = isPrimaryAdmin ? 'admin' : 'volunteer';
     const def = getDefaultPermissionsForRole(role);
@@ -287,7 +466,7 @@ export default function App() {
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
     };
-  }, [parsedUsers, fbUser]);
+  }, [parsedUsers, fbUser, localLoggedInUserId]);
 
   // Firestore Real-time Sync Listeners (aligned with Auth & RBAC lifecycle)
   useEffect(() => {
@@ -550,8 +729,36 @@ export default function App() {
         </nav>
 
         {/* Zone 3: 1-2 primary actions */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <PWAControls />
+          <div className="hidden sm:flex items-center bg-slate-100 rounded-lg p-0.5">
+            <button
+              type="button"
+              onClick={handleUndo}
+              disabled={undoStack.length === 0}
+              className="p-1.5 text-slate-700 hover:bg-white rounded-md disabled:opacity-35 transition-colors"
+              title="בטל פעולה אחרונה (Ctrl+Z)"
+            >
+              <Undo2 className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={handleRedo}
+              disabled={redoStack.length === 0}
+              className="p-1.5 text-slate-700 hover:bg-white rounded-md disabled:opacity-35 transition-colors"
+              title="בצע מחדש (Ctrl+Y)"
+            >
+              <Redo2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowShortcutsModal(true)}
+            className="p-1.5 text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+            title="כל קיצורי המקשים במערכת (?)"
+          >
+            <Keyboard className="w-3.5 h-3.5" />
+          </button>
           <button
             type="button"
             onClick={() => setShowCommandPalette(true)}
@@ -561,11 +768,11 @@ export default function App() {
             <Search className="w-3.5 h-3.5" />
             <span>חיפוש (Ctrl+K)</span>
           </button>
-          {fbUser || localLoggedInName ? (
+          {fbUser || localLoggedInUserId ? (
             <button
               type="button"
               onClick={() => {
-                setLocalLoggedInName(null);
+                setLocalLoggedInUserId(null);
                 clearCachedAccessToken();
                 if (fbUser) signOut(auth);
               }}
@@ -586,20 +793,45 @@ export default function App() {
         </div>
       </header>
 
-      {/* Sub-header context bar with Hebrew Date, Sunset & Quick Sync */}
+      {/* Shortcut / Undo Toast */}
+      {shortcutToast && (
+        <div className="fixed bottom-5 left-5 z-50 bg-slate-900 text-white text-xs font-semibold px-4 py-2.5 rounded-xl shadow-lg border border-slate-700 flex items-center gap-2">
+          <Keyboard className="w-4 h-4 text-amber-400" />
+          <span>{shortcutToast}</span>
+        </div>
+      )}
+
+      {/* Sub-header context bar with Hebrew Date, Sunset & Active RBAC User */}
       <div className="bg-slate-900 text-slate-200 px-6 py-2 text-xs flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <span>היום בלוח העברי: <strong>{todayHebrew.hebrewDisplay}</strong></span>
           <span aria-hidden="true">·</span>
           <span className="font-mono tabular-nums">{todayHebrew.gregorianIso}</span>
           <span aria-hidden="true">·</span>
-          <span>שקיעה היום (נווה יוסף, חיפה): <strong className="font-mono">{todayHebrew.sunsetTime}</strong></span>
+          <span>שקיעה היום ({defaultMapLocation.locationName}): <strong className="font-mono">{todayHebrew.sunsetTime}</strong></span>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <span>
-            משתמש פעיל: <strong>{localLoggedInName || currentUser.displayName}</strong>
+            משתמש פעיל: <strong>{currentUser.displayName}</strong>{' '}
+            <span className="text-slate-400">({ROLE_TEMPLATE_LABELS[currentUser.roleTemplate]})</span>
           </span>
+          {parsedUsers.length > 1 && (
+            <select
+              aria-label="החלפת משתמש פעיל לבדיקת הרשאות"
+              value={currentUser.id}
+              onChange={(e) => setLocalLoggedInUserId(e.target.value)}
+              className="bg-slate-800 text-slate-100 border border-slate-700 rounded px-2 py-0.5 text-[11px]"
+            >
+              {parsedUsers
+                .filter((u) => !u.isBlocked)
+                .map((u) => (
+                  <option key={u.id} value={u.id}>
+                    החלף משתמש: {u.displayName} ({ROLE_TEMPLATE_LABELS[u.roleTemplate]})
+                  </option>
+                ))}
+            </select>
+          )}
           {fbUser && (
             <button
               type="button"
@@ -642,67 +874,219 @@ export default function App() {
 
       {/* Main Content Container */}
       <main className="flex-1 max-w-[1400px] w-full mx-auto px-6 py-8">
-        {!fbUser && !localLoggedInName && (
-          <div className="mb-6 bg-white border border-slate-200 rounded-xl p-5 flex flex-wrap items-center justify-between gap-4">
-            <div className="space-y-1">
-              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                <Lock className="w-4 h-4 text-amber-600" />
-                מצב עבודה מקומי פעיל — התחבר לענן לסנכרון רב-מכשירים ואכיפת הרשאות בשרת
-              </h3>
-              <p className="text-xs text-slate-600">
-                ניתן לעבוד כעת באופן מלא באופליין או להתחבר עם שם משתמש וסיסמה / חשבון Google לסנכרון מול הענן.
-              </p>
+        {!fbUser && !localLoggedInUserId && (
+          <div className="mb-6 bg-white border border-slate-200 rounded-xl p-5 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div className="space-y-1">
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <Lock className="w-4 h-4 text-amber-600" />
+                  כניסה ורישום למערכת (מערך הרשאות RBAC פעיל)
+                </h3>
+                <p className="text-xs text-slate-600">
+                  התחבר עם משתמש קיים (למשל <span className="font-mono">admin</span> / <span className="font-mono">123456</span>), הירשם כמשתמש חדש או התחבר עם חשבון Google.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode('login');
+                    setLoginError(null);
+                  }}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg ${
+                    authMode === 'login' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700'
+                  }`}
+                >
+                  כניסה למערכת
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode('register');
+                    setLoginError(null);
+                  }}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-1 ${
+                    authMode === 'register' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700'
+                  }`}
+                >
+                  <UserPlus className="w-3.5 h-3.5" />
+                  <span>רישום משתמש חדש</span>
+                </button>
+              </div>
             </div>
 
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                setLoginError(null);
-                if (!usernameInput.trim() || !passwordInput.trim()) {
-                  setLoginError('נא להזין שם משתמש וסיסמה');
-                  return;
-                }
-                setLocalLoggedInName(usernameInput.trim());
-                setUsernameInput('');
-                setPasswordInput('');
-              }}
-              className="flex flex-wrap items-center gap-2"
-            >
-              <input
-                type="text"
-                value={usernameInput}
-                onChange={(e) => setUsernameInput(e.target.value)}
-                placeholder="שם משתמש"
-                className="px-3 py-1.5 text-xs border border-slate-300 rounded-lg"
-              />
-              <input
-                type="password"
-                value={passwordInput}
-                onChange={(e) => setPasswordInput(e.target.value)}
-                placeholder="סיסמה"
-                className="px-3 py-1.5 text-xs border border-slate-300 rounded-lg"
-              />
-              <button
-                type="submit"
-                className="px-3 py-1.5 bg-slate-800 text-white text-xs font-semibold rounded-lg hover:bg-slate-700"
+            {authMode === 'login' ? (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  setLoginError(null);
+                  const uname = usernameInput.trim().toLowerCase();
+                  const pass = passwordInput.trim();
+                  if (!uname || !pass) {
+                    setLoginError('נא להזין שם משתמש וסיסמה');
+                    return;
+                  }
+                  const matched = parsedUsers.find(
+                    (u) =>
+                      (u.username || '').toLowerCase() === uname ||
+                      u.email.toLowerCase() === uname ||
+                      u.displayName === usernameInput.trim()
+                  );
+                  if (!matched) {
+                    setLoginError('שם המשתמש לא נמצא במערכת. ניתן להירשם בלשונית "רישום משתמש חדש".');
+                    return;
+                  }
+                  if (matched.isBlocked) {
+                    setLoginError('חשבון משתמש זה חסום על ידי מנהל המערכת.');
+                    return;
+                  }
+                  if (matched.passwordHash && decryptSensitiveString(matched.passwordHash) !== pass) {
+                    setLoginError('הסיסמה שהוזנה שגויה.');
+                    return;
+                  }
+                  setLocalLoggedInUserId(matched.id);
+                  setUsernameInput('');
+                  setPasswordInput('');
+                }}
+                className="flex flex-wrap items-center gap-2"
               >
-                כניסה
-              </button>
-              <button
-                type="button"
-                onClick={handleGoogleSignIn}
-                className="px-3 py-1.5 bg-amber-600 text-white text-xs font-semibold rounded-lg hover:bg-amber-700"
+                <input
+                  type="text"
+                  value={usernameInput}
+                  onChange={(e) => setUsernameInput(e.target.value)}
+                  placeholder="שם משתמש או אימייל (למשל admin)"
+                  className="px-3 py-1.5 text-xs border border-slate-300 rounded-lg"
+                />
+                <input
+                  type="password"
+                  value={passwordInput}
+                  onChange={(e) => setPasswordInput(e.target.value)}
+                  placeholder="סיסמה (למשל 123456)"
+                  className="px-3 py-1.5 text-xs border border-slate-300 rounded-lg"
+                />
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 bg-slate-900 text-white text-xs font-semibold rounded-lg hover:bg-slate-800"
+                >
+                  כניסה
+                </button>
+                <button
+                  type="button"
+                  onClick={handleGoogleSignIn}
+                  className="px-3 py-1.5 bg-amber-600 text-white text-xs font-semibold rounded-lg hover:bg-amber-700"
+                >
+                  אימות Google מהיר
+                </button>
+                {loginError && <span className="text-xs text-red-600 w-full">{loginError}</span>}
+              </form>
+            ) : (
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  setLoginError(null);
+                  if (!regDisplayNameInput.trim() || !usernameInput.trim() || !passwordInput.trim()) {
+                    setLoginError('נא למלא שם מלא, שם משתמש וסיסמה לרישום.');
+                    return;
+                  }
+                  const exists = parsedUsers.some(
+                    (u) => (u.username || '').toLowerCase() === usernameInput.trim().toLowerCase()
+                  );
+                  if (exists) {
+                    setLoginError('שם המשתמש כבר קיים במערכת.');
+                    return;
+                  }
+                  const now = new Date().toISOString();
+                  const newId = generateUuidV7();
+                  const def = getDefaultPermissionsForRole(regRoleInput);
+                  const newUser: UserRecord = {
+                    id: newId,
+                    uid: newId,
+                    displayName: regDisplayNameInput.trim(),
+                    email: regEmailInput.trim() || `${usernameInput.trim()}@chabad.local`,
+                    username: usernameInput.trim(),
+                    passwordHash: encryptSensitiveString(passwordInput.trim()),
+                    roleTemplate: regRoleInput,
+                    isBlocked: false,
+                    sessionVersion: 1,
+                    permissionsJson: JSON.stringify(def.domains),
+                    sensitivePermissionsJson: JSON.stringify(def.sensitive),
+                    createdAt: now,
+                    updatedAt: now,
+                  };
+                  setUsers((prev) => [...prev, newUser]);
+                  setLocalLoggedInUserId(newId);
+                  setRegDisplayNameInput('');
+                  setRegEmailInput('');
+                  setUsernameInput('');
+                  setPasswordInput('');
+                  await writeAuditLog(
+                    'רישום משתמש חדש למערכת',
+                    newId,
+                    newUser.displayName,
+                    `נרשם עם תבנית הרשאות: ${ROLE_TEMPLATE_LABELS[regRoleInput]}`
+                  );
+                }}
+                className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-2 items-center"
               >
-                אימות Google מהיר
-              </button>
-              {loginError && <span className="text-xs text-red-600 w-full">{loginError}</span>}
-            </form>
+                <input
+                  type="text"
+                  required
+                  value={regDisplayNameInput}
+                  onChange={(e) => setRegDisplayNameInput(e.target.value)}
+                  placeholder="שם מלא ותפקיד"
+                  className="px-3 py-1.5 text-xs border border-slate-300 rounded-lg"
+                />
+                <input
+                  type="email"
+                  value={regEmailInput}
+                  onChange={(e) => setRegEmailInput(e.target.value)}
+                  placeholder="אימייל (אופציונלי)"
+                  className="px-3 py-1.5 text-xs border border-slate-300 rounded-lg"
+                />
+                <input
+                  type="text"
+                  required
+                  value={usernameInput}
+                  onChange={(e) => setUsernameInput(e.target.value)}
+                  placeholder="שם משתמש לכניסה"
+                  className="px-3 py-1.5 text-xs border border-slate-300 rounded-lg"
+                />
+                <input
+                  type="password"
+                  required
+                  value={passwordInput}
+                  onChange={(e) => setPasswordInput(e.target.value)}
+                  placeholder="סיסמה"
+                  className="px-3 py-1.5 text-xs border border-slate-300 rounded-lg"
+                />
+                <div className="flex items-center gap-2">
+                  <select
+                    value={regRoleInput}
+                    onChange={(e) => setRegRoleInput(e.target.value as RoleTemplateName)}
+                    className="flex-1 px-2 py-1.5 text-xs border border-slate-300 rounded-lg bg-white"
+                  >
+                    {Object.entries(ROLE_TEMPLATE_LABELS).map(([k, label]) => (
+                      <option key={k} value={k}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="submit"
+                    className="px-4 py-1.5 bg-slate-900 text-white text-xs font-semibold rounded-lg hover:bg-slate-800 whitespace-nowrap"
+                  >
+                    הירשם והיכנס
+                  </button>
+                </div>
+                {loginError && <span className="text-xs text-red-600 sm:col-span-5">{loginError}</span>}
+              </form>
+            )}
           </div>
         )}
 
         {activeTab === 'dashboard' && (
           <DashboardView
-            userName={localLoggedInName || currentUser.displayName}
+            userName={currentUser.displayName}
             activities={activities}
             tasks={tasks}
             transactions={transactions}
@@ -710,6 +1094,7 @@ export default function App() {
             communityEntities={communityEntities}
             canWriteTasks={hasDomainAccess(currentUser.permissions, 'annual_plan_tasks', 'write')}
             onToggleTaskCompleted={async (task) => {
+              recordUndoSnapshot(`סימון משימה: ${task.title}`);
               const now = new Date().toISOString();
               const updated: TaskNodeRecord = {
                 ...task,
@@ -735,10 +1120,11 @@ export default function App() {
             templates={templates}
             tasks={tasks}
             canWrite={hasDomainAccess(currentUser.permissions, 'annual_plan_tasks', 'write')}
-            defaultLocationName="חיפה - נווה יוסף"
-            defaultLat={32.784}
-            defaultLng={35.0195}
+            defaultLocationName={defaultMapLocation.locationName}
+            defaultLat={defaultMapLocation.lat}
+            defaultLng={defaultMapLocation.lng}
             onSaveActivity={async (data, existingId) => {
+              recordUndoSnapshot(`שמירת פעילות שנתית: ${data.title}`);
               const now = new Date().toISOString();
               const id = existingId || generateUuidV7();
               const existing = activities.find((a) => a.id === id);
@@ -761,6 +1147,7 @@ export default function App() {
               return id;
             }}
             onToggleExecuted={async (act) => {
+              recordUndoSnapshot(`עדכון ביצוע פעילות: ${act.title}`);
               const now = new Date().toISOString();
               const updated: AnnualActivityRecord = {
                 ...act,
@@ -780,6 +1167,7 @@ export default function App() {
               const now = new Date().toISOString();
               const target = activities.find((a) => a.id === id);
               if (!target) return;
+              recordUndoSnapshot(`מחיקת פעילות: ${target.title}`);
               const updated: AnnualActivityRecord = { ...target, deletedAt: now, updatedAt: now };
               setActivities((prev) => prev.map((a) => (a.id === id ? updated : a)));
               await writeAuditLog('מחיקה רכה של פעילות שנתית', id, target.title, 'סומן deleted_at');
@@ -792,6 +1180,7 @@ export default function App() {
               }
             }}
             onSaveTask={async (data, existingId) => {
+              recordUndoSnapshot(`שמירת משימה: ${data.title}`);
               const now = new Date().toISOString();
               const id = existingId || generateUuidV7();
               const existing = tasks.find((t) => t.id === id);
@@ -813,6 +1202,7 @@ export default function App() {
               }
             }}
             onToggleTaskCompleted={async (task) => {
+              recordUndoSnapshot(`סימון משימה: ${task.title}`);
               const now = new Date().toISOString();
               const updated: TaskNodeRecord = {
                 ...task,
@@ -832,6 +1222,7 @@ export default function App() {
               const now = new Date().toISOString();
               const target = tasks.find((t) => t.id === id);
               if (!target) return;
+              recordUndoSnapshot(`מחיקת משימה: ${target.title}`);
               const updated: TaskNodeRecord = { ...target, deletedAt: now, updatedAt: now };
               setTasks((prev) => prev.map((t) => (t.id === id ? updated : t)));
               if (fbUser) {
@@ -850,6 +1241,7 @@ export default function App() {
             tasks={tasks}
             canWrite={hasDomainAccess(currentUser.permissions, 'annual_plan_tasks', 'write')}
             onSaveTask={async (data, existingId) => {
+              recordUndoSnapshot(`שמירת משימה בעץ התכנון: ${data.title}`);
               const now = new Date().toISOString();
               const id = existingId || generateUuidV7();
               const existing = tasks.find((t) => t.id === id);
@@ -871,6 +1263,7 @@ export default function App() {
               }
             }}
             onToggleTaskCompleted={async (task) => {
+              recordUndoSnapshot(`סימון ביצוע משימה: ${task.title}`);
               const now = new Date().toISOString();
               const updated: TaskNodeRecord = {
                 ...task,
@@ -890,6 +1283,7 @@ export default function App() {
               const now = new Date().toISOString();
               const target = tasks.find((t) => t.id === id);
               if (!target) return;
+              recordUndoSnapshot(`מחיקת משימה: ${target.title}`);
               const updated: TaskNodeRecord = { ...target, deletedAt: now, updatedAt: now };
               setTasks((prev) => prev.map((t) => (t.id === id ? updated : t)));
               if (fbUser) {
@@ -913,6 +1307,7 @@ export default function App() {
             canWriteSecondAssoc={hasDomainAccess(currentUser.permissions, 'second_association', 'write')}
             defaultFeePercent={3}
             onSaveTransaction={async (data) => {
+              recordUndoSnapshot(`רישום תנועה כספית: ${data.description}`);
               const now = new Date().toISOString();
               const id = generateUuidV7();
               const record: FinancialTransactionRecord = {
@@ -937,6 +1332,7 @@ export default function App() {
               }
             }}
             onUpdateTransactionStatus={async (tx, newStatus) => {
+              recordUndoSnapshot(`שינוי סטטוס תנועה: ${tx.description}`);
               const now = new Date().toISOString();
               const updated: FinancialTransactionRecord = {
                 ...tx,
@@ -956,6 +1352,7 @@ export default function App() {
               const now = new Date().toISOString();
               const target = transactions.find((t) => t.id === id);
               if (!target) return;
+              recordUndoSnapshot(`מחיקת תנועה כספית: ${target.description}`);
               const updated: FinancialTransactionRecord = {
                 ...target,
                 deletedAt: now,
@@ -984,6 +1381,7 @@ export default function App() {
             selectedDonorId={selectedDonorId}
             onSelectDonorId={setSelectedDonorId}
             onSaveDonor={async (data, existingId) => {
+              recordUndoSnapshot(`שמירת איש קשר: ${data.fullName}`);
               const now = new Date().toISOString();
               const id = existingId || generateUuidV7();
               const existing = donors.find((d) => d.id === id);
@@ -1008,6 +1406,7 @@ export default function App() {
               const now = new Date().toISOString();
               const target = donors.find((d) => d.id === id);
               if (!target) return;
+              recordUndoSnapshot(`מחיקת איש קשר: ${target.fullName}`);
               const updated: DonorContactRecord = { ...target, deletedAt: now, updatedAt: now };
               setDonors((prev) => prev.map((d) => (d.id === id ? updated : d)));
               await writeAuditLog('מחיקה רכה של איש קשר / תורם', id, target.fullName, 'סומן deleted_at');
@@ -1028,6 +1427,7 @@ export default function App() {
               );
             }}
             onSaveCommunityEntity={async (data) => {
+              recordUndoSnapshot(`הוספת רשומת קהילה: ${data.titleOrName}`);
               const now = new Date().toISOString();
               const id = generateUuidV7();
               const record: VolunteerEntityRecord = {
@@ -1053,10 +1453,22 @@ export default function App() {
             donors={donors}
             communityEntities={communityEntities}
             canWrite={hasDomainAccess(currentUser.permissions, 'gis_map', 'write')}
+            defaultMapLocation={defaultMapLocation}
+            onUpdateDefaultMapLocation={async (newConfig) => {
+              recordUndoSnapshot(`שינוי מיקום ברירת מחדל במפה: ${newConfig.locationName}`);
+              setDefaultMapLocation(newConfig);
+              await writeAuditLog(
+                'עדכון מיקום ברירת מחדל של המפה',
+                'map_default_location',
+                newConfig.locationName,
+                `קואורדינטות: ${newConfig.lat}, ${newConfig.lng} (זום ${newConfig.zoom})`
+              );
+            }}
             onUpdateDonorCoords={async (donorId, lat, lng) => {
               const now = new Date().toISOString();
               const target = donors.find((d) => d.id === donorId);
               if (!target) return;
+              recordUndoSnapshot(`עדכון מיקום דייר במפה: ${target.fullName}`);
               const updated: DonorContactRecord = { ...target, lat, lng, updatedAt: now };
               setDonors((prev) => prev.map((d) => (d.id === donorId ? updated : d)));
               if (fbUser) {
@@ -1068,6 +1480,7 @@ export default function App() {
               }
             }}
             onSaveDonor={async (data, existingId) => {
+              recordUndoSnapshot(`שמירת דייר בבניין: ${data.fullName}`);
               const now = new Date().toISOString();
               const id = existingId || generateUuidV7();
               const existing = donors.find((d) => d.id === id);
@@ -1092,6 +1505,7 @@ export default function App() {
               const now = new Date().toISOString();
               const target = donors.find((d) => d.id === id);
               if (!target) return;
+              recordUndoSnapshot(`הסרת דייר מבניין: ${target.fullName}`);
               const updated: DonorContactRecord = { ...target, deletedAt: now, updatedAt: now };
               setDonors((prev) => prev.map((d) => (d.id === id ? updated : d)));
               await writeAuditLog('הסרת דייר מבניין במפה (מחיקה רכה)', id, target.fullName, 'סומן deleted_at');
@@ -1104,6 +1518,7 @@ export default function App() {
               }
             }}
             onAddStreetNote={async (title, address, notes, lat, lng) => {
+              recordUndoSnapshot(`הוספת הערת רחוב במפה: ${title}`);
               const now = new Date().toISOString();
               const id = generateUuidV7();
               const record: VolunteerEntityRecord = {
@@ -1145,6 +1560,55 @@ export default function App() {
             transactions={transactions}
             donors={donors}
             communityEntities={communityEntities}
+            defaultMapLocation={defaultMapLocation}
+            onUpdateDefaultMapLocation={async (newConfig) => {
+              recordUndoSnapshot(`שינוי מיקום ברירת מחדל במפה: ${newConfig.locationName}`);
+              setDefaultMapLocation(newConfig);
+              await writeAuditLog(
+                'עדכון מיקום ברירת מחדל של המפה',
+                'map_default_location',
+                newConfig.locationName,
+                `קואורדינטות: ${newConfig.lat}, ${newConfig.lng} (זום ${newConfig.zoom})`
+              );
+            }}
+            onSwitchActiveUser={(userId) => {
+              setLocalLoggedInUserId(userId);
+              triggerShortcutToast('המשתמש הפעיל הוחלף — הרשאות המערכת עודכנו בהתאם');
+            }}
+            onRegisterNewUser={async (data) => {
+              const now = new Date().toISOString();
+              const id = generateUuidV7();
+              const def = getDefaultPermissionsForRole(data.roleTemplate);
+              const record: UserRecord = {
+                id,
+                uid: id,
+                displayName: data.displayName,
+                email: data.email,
+                username: data.username,
+                passwordHash: encryptSensitiveString(data.passwordPlain),
+                roleTemplate: data.roleTemplate,
+                isBlocked: false,
+                sessionVersion: 1,
+                permissionsJson: JSON.stringify(def.domains),
+                sensitivePermissionsJson: JSON.stringify(def.sensitive),
+                createdAt: now,
+                updatedAt: now,
+              };
+              setUsers((prev) => [...prev, record]);
+              await writeAuditLog(
+                'רישום משתמש חדש במערך ההרשאות',
+                id,
+                data.displayName,
+                `תפקיד: ${ROLE_TEMPLATE_LABELS[data.roleTemplate]}, שם משתמש: ${data.username}`
+              );
+              if (fbUser) {
+                try {
+                  await setDoc(doc(db, 'users', id), sanitizeForFirestore(record));
+                } catch (err) {
+                  handleFirestoreError(err, OperationType.CREATE, `users/${id}`);
+                }
+              }
+            }}
             onUpdateUserRoleAndPermissions={async (
               targetUser,
               newRole,
@@ -1161,6 +1625,8 @@ export default function App() {
                 uid: targetUser.uid,
                 email: targetUser.email,
                 displayName: targetUser.displayName,
+                username: targetUser.username,
+                passwordHash: targetUser.passwordHash,
                 roleTemplate: newRole,
                 isBlocked: newIsBlocked,
                 sessionVersion: nextSessionVersion,
@@ -1205,6 +1671,7 @@ export default function App() {
               }
             }}
             onRestoreBackupData={async (payload) => {
+              recordUndoSnapshot('שחזור גיבוי מלא מוצפן');
               if (payload.activities) setActivities(payload.activities);
               if (payload.tasks) setTasks(payload.tasks);
               if (payload.transactions) setTransactions(payload.transactions);
@@ -1228,6 +1695,49 @@ export default function App() {
         )}
       </main>
 
+      {/* Keyboard Shortcuts Reference Modal (?) */}
+      {showShortcutsModal && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-xl shadow-2xl w-full max-w-lg overflow-hidden">
+            <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <Keyboard className="w-4 h-4 text-slate-700" />
+                קיצורי מקשים במערכת
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowShortcutsModal(false)}
+                className="text-xs text-slate-500 hover:text-slate-800 font-semibold"
+              >
+                סגור (ESC)
+              </button>
+            </div>
+            <div className="p-4 space-y-2 text-xs">
+              {[
+                { keys: 'Ctrl + Z', desc: 'ביטול הפעולה האחרונה שבוצעה במערכת (Undo)' },
+                { keys: 'Ctrl + Y / Ctrl + Shift + Z', desc: 'ביצוע מחדש של פעולה שבוטלה (Redo)' },
+                { keys: 'Ctrl + K / Ctrl + F', desc: 'פתיחת חלונית חיפוש מהיר ופקודות' },
+                { keys: 'Ctrl + N', desc: 'פתיחת תפריט יצירה מהירה של רשומה חדשה' },
+                { keys: 'Ctrl + S', desc: 'שמירה מיידית של כל הנתונים בזיכרון המקומי ובענן' },
+                { keys: 'Alt + 1 ... Alt + 7', desc: 'מעבר מהיר בין 7 לשוניות המערכת הראשיות' },
+                { keys: '?', desc: 'פתיחה וסגירה של טבלת קיצורי המקשים' },
+                { keys: 'Esc', desc: 'סגירת חלוניות קופצות ותפריטים פתוחים' },
+              ].map((item, idx) => (
+                <div
+                  key={idx}
+                  className="flex items-center justify-between py-2 border-b border-slate-100 last:border-b-0"
+                >
+                  <span className="text-slate-700 font-medium">{item.desc}</span>
+                  <kbd className="px-2 py-1 bg-slate-100 border border-slate-300 rounded font-mono text-[11px] text-slate-900">
+                    {item.keys}
+                  </kbd>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Global Command Palette Modal (Ctrl+K / Ctrl+N) */}
       {showCommandPalette && (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-start justify-center pt-20 p-4">
@@ -1250,17 +1760,96 @@ export default function App() {
                 ESC
               </button>
             </div>
-            <div className="p-3 max-h-80 overflow-y-auto divide-y divide-slate-100 text-xs">
+            <div className="p-3 max-h-96 overflow-y-auto divide-y divide-slate-200/80 text-xs">
+              {commandQuery.trim() !== '' && (
+                <div className="pb-3 space-y-1.5">
+                  <div className="text-slate-600 font-bold px-2">תוצאות חיפוש מיידיות במאגר:</div>
+                  {donors
+                    .filter(
+                      (d) =>
+                        !d.deletedAt &&
+                        (d.fullName.toLowerCase().includes(commandQuery.toLowerCase()) ||
+                          d.identifierMark.toLowerCase().includes(commandQuery.toLowerCase()) ||
+                          d.address.toLowerCase().includes(commandQuery.toLowerCase()))
+                    )
+                    .slice(0, 4)
+                    .map((d) => (
+                      <button
+                        key={d.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedDonorId(d.id);
+                          setActiveTab('crm_donors');
+                          setShowCommandPalette(false);
+                        }}
+                        className="w-full text-right px-3 py-2 rounded-lg hover:bg-slate-200/70 font-medium text-slate-900 flex items-center justify-between"
+                      >
+                        <span>
+                          <strong>תורם: {d.fullName}</strong> · {d.identifierMark} ({d.address})
+                        </span>
+                        <span className="text-[11px] text-slate-500">פתח CRM</span>
+                      </button>
+                    ))}
+                  {tasks
+                    .filter(
+                      (t) =>
+                        !t.deletedAt &&
+                        (t.title.toLowerCase().includes(commandQuery.toLowerCase()) ||
+                          (t.strategicGoal || '').toLowerCase().includes(commandQuery.toLowerCase()))
+                    )
+                    .slice(0, 4)
+                    .map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => {
+                          setActiveTab('tasks_dag');
+                          setShowCommandPalette(false);
+                        }}
+                        className="w-full text-right px-3 py-2 rounded-lg hover:bg-slate-200/70 font-medium text-slate-900 flex items-center justify-between"
+                      >
+                        <span>
+                          <strong>משימה: {t.title}</strong> · {t.hebrewDateStr || 'ללא תאריך'}
+                        </span>
+                        <span className="text-[11px] text-slate-500">פתח עץ תכנון</span>
+                      </button>
+                    ))}
+                  {activities
+                    .filter(
+                      (a) =>
+                        !a.deletedAt &&
+                        (a.title.toLowerCase().includes(commandQuery.toLowerCase()) ||
+                          a.hebrewDateDisplay.toLowerCase().includes(commandQuery.toLowerCase()))
+                    )
+                    .slice(0, 4)
+                    .map((a) => (
+                      <button
+                        key={a.id}
+                        type="button"
+                        onClick={() => {
+                          setActiveTab('annual_plan');
+                          setShowCommandPalette(false);
+                        }}
+                        className="w-full text-right px-3 py-2 rounded-lg hover:bg-slate-200/70 font-medium text-slate-900 flex items-center justify-between"
+                      >
+                        <span>
+                          <strong>פעילות שנתית: {a.title}</strong> · {a.hebrewDateDisplay}
+                        </span>
+                        <span className="text-[11px] text-slate-500">פתח תוכנית</span>
+                      </button>
+                    ))}
+                </div>
+              )}
               <div className="py-2 space-y-1">
-                <div className="text-slate-400 font-semibold px-2">ניווט ופעולות מהירות (Ctrl+N / Ctrl+K)</div>
+                <div className="text-slate-600 font-bold px-2">ניווט ופעולות מהירות (Ctrl+Z / Ctrl+K / Alt+1..7)</div>
                 {[
-                  { label: 'מעבר לדשבורד הראשי ותזכורות משימות', tab: 'dashboard' as NavTab },
-                  { label: 'מעבר לתוכנית שנתית ולוח עברי', tab: 'annual_plan' as NavTab },
-                  { label: 'מעבר למשימות, פרויקטים ומסלול קריטי (DAG)', tab: 'tasks_dag' as NavTab },
-                  { label: 'מעבר לדשבורד כספים והעמותה השנייה', tab: 'finances' as NavTab },
-                  { label: 'מעבר ל-CRM תורמים ומתנדבים', tab: 'crm_donors' as NavTab },
-                  { label: 'מעבר למפת GIS והערות רחוב', tab: 'gis_map' as NavTab },
-                  { label: 'מעבר להרשאות RBAC, גיבוי ובדיקות יחידה', tab: 'rbac_settings' as NavTab },
+                  { label: 'מעבר לדשבורד הראשי ותזכורות משימות (Alt+1)', tab: 'dashboard' as NavTab },
+                  { label: 'מעבר לתוכנית שנתית ולוח עברי (Alt+2)', tab: 'annual_plan' as NavTab },
+                  { label: 'מעבר למשימות, פרויקטים ומסלול קריטי (Alt+3)', tab: 'tasks_dag' as NavTab },
+                  { label: 'מעבר לדשבורד כספים והעמותה השנייה (Alt+4)', tab: 'finances' as NavTab },
+                  { label: 'מעבר ל-CRM תורמים ומתנדבים (Alt+5)', tab: 'crm_donors' as NavTab },
+                  { label: 'מעבר למפת GIS ועריכת מיקום ברירת מחדל (Alt+6)', tab: 'gis_map' as NavTab },
+                  { label: 'מעבר להרשאות RBAC, רישום משתמשים וגיבוי (Alt+7)', tab: 'rbac_settings' as NavTab },
                 ].map((cmd, i) => (
                   <button
                     key={i}
@@ -1284,7 +1873,7 @@ export default function App() {
       {/* Clean Quiet Footer */}
       <footer className="bg-white border-t border-slate-200 px-6 py-4 text-xs text-slate-500 flex flex-wrap items-center justify-between gap-2">
         <div>בית חב״ד ERP — מערכת ניהול שנתית, כספים, תורמים וקהילה</div>
-        <div>קיצורי מקשים: Ctrl+K לחיפוש מהיר · Ctrl+N לפעולה חדשה</div>
+        <div>קיצורי מקשים: Ctrl+Z לביטול · Ctrl+Y לביצוע מחדש · Ctrl+K לחיפוש · Alt+1..7 למעבר בין עמודים · ? לכל הקיצורים</div>
       </footer>
     </div>
   );

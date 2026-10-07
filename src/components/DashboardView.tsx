@@ -225,13 +225,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div className="text-xs text-slate-500">יתרה דינמית (כספים רגילים + עמותה שנייה)</div>
           <div className="text-2xl font-bold text-emerald-700 font-mono tabular-nums">
             {formatAgorotToIls(
-              regularFinanceSummary.actualBalanceAgorot +
-                secondAssocSummary.actualBalanceAgorot
+              regularFinanceSummary.currentBalanceAgorot +
+                secondAssocSummary.currentBalanceAgorot
             )}
           </div>
           <div className="text-xs text-slate-600 font-mono tabular-nums">
-            רגיל: {formatAgorotToIls(regularFinanceSummary.actualBalanceAgorot)} · עמותה ב׳:{' '}
-            {formatAgorotToIls(secondAssocSummary.actualBalanceAgorot)}
+            רגיל: {formatAgorotToIls(regularFinanceSummary.currentBalanceAgorot)} · עמותה ב׳:{' '}
+            {formatAgorotToIls(secondAssocSummary.currentBalanceAgorot)}
           </div>
         </div>
 

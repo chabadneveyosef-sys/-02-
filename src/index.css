@@ -4,6 +4,8 @@
   body {
     font-family: 'Assistant', system-ui, -apple-system, sans-serif;
     direction: rtl;
+    background-color: #ece9e2;
+    color: #1e293b;
   }
 
   h1, h2, .font-display {
@@ -14,9 +16,89 @@
     font-family: 'IBM Plex Mono', monospace;
     font-variant-numeric: tabular-nums;
   }
+
+  /* Avoid blinding pure-white surfaces across the application for eye comfort */
+  .bg-white {
+    background-color: #f6f4ef !important;
+  }
+
+  .bg-slate-50 {
+    background-color: #eeebe4 !important;
+  }
+
+  .bg-slate-100 {
+    background-color: #e4e0d7 !important;
+  }
+
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    background-color: #f9f8f4;
+    border-color: #cbd5e1;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+  }
+
+  input:not([type="checkbox"]):not([type="radio"]):focus,
+  select:focus,
+  textarea:focus {
+    outline: none;
+    background-color: #fcfbf9;
+    border-color: #475569;
+    box-shadow: 0 0 0 3px rgba(71, 85, 105, 0.14);
+  }
+}
+
+/* Professional ERP Table Discipline & Column Proportioning */
+.erp-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.erp-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background-color: #e6e2d8;
+  color: #334155;
+  font-weight: 700;
+  border-bottom: 1px solid #cbd5e1;
+  white-space: nowrap;
+}
+
+.erp-table tbody tr {
+  transition: background-color 0.12s ease;
+}
+
+.erp-table tbody tr:nth-child(even) {
+  background-color: rgba(235, 231, 222, 0.45);
+}
+
+.erp-table tbody tr:hover {
+  background-color: rgba(218, 212, 198, 0.55) !important;
+}
+
+/* Text-heavy cells receive generous fixed/minimum width and comfortable line-height */
+.col-text-wide {
+  min-width: 310px;
+  max-width: 520px;
+  width: 36%;
+  line-height: 1.55;
+}
+
+.col-text-medium {
+  min-width: 220px;
+  width: 24%;
+  line-height: 1.5;
+}
+
+.col-compact {
+  width: 1%;
+  white-space: nowrap;
 }
 
 .leaflet-container {
   font-family: 'Assistant', sans-serif !important;
   z-index: 10;
 }
+

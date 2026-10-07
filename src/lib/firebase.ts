@@ -9,12 +9,14 @@ import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
 
+const configWithDb = firebaseConfig as typeof firebaseConfig & { firestoreDatabaseId?: string };
+
 export const db = initializeFirestore(
   app,
   {
     experimentalForceLongPolling: true,
   },
-  firebaseConfig.firestoreDatabaseId
+  configWithDb.firestoreDatabaseId
 );
 
 export const auth = getAuth(app);

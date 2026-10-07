@@ -11,7 +11,64 @@ import {
   FinancialTransactionRecord,
   DonorContactRecord,
   VolunteerEntityRecord,
+  UserRecord,
 } from '../types/erp';
+import { getDefaultPermissionsForRole } from './rbac';
+
+export function buildSeedUsers(): UserRecord[] {
+  const now = new Date().toISOString();
+  const adminDef = getDefaultPermissionsForRole('admin');
+  const finDef = getDefaultPermissionsForRole('treasurer');
+  const coordDef = getDefaultPermissionsForRole('coordinator');
+
+  return [
+    {
+      id: 'local-admin',
+      uid: 'local-admin',
+      email: 'chabadneveyosef@gmail.com',
+      displayName: 'הרב מנחם כהן (מנהל ראשי)',
+      username: 'admin',
+      passwordHash: encryptSensitiveString('123456'),
+      roleTemplate: 'admin',
+      isBlocked: false,
+      sessionVersion: 1,
+      permissionsJson: JSON.stringify(adminDef.domains),
+      sensitivePermissionsJson: JSON.stringify(adminDef.sensitive),
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: generateUuidV7(Date.now() - 75000),
+      uid: 'user-finance-1',
+      email: 'finance@chabadneveyosef.org',
+      displayName: 'רו״ח דוד לוי (גזבר וכספים)',
+      username: 'finance',
+      passwordHash: encryptSensitiveString('123456'),
+      roleTemplate: 'treasurer',
+      isBlocked: false,
+      sessionVersion: 1,
+      permissionsJson: JSON.stringify(finDef.domains),
+      sensitivePermissionsJson: JSON.stringify(finDef.sensitive),
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: generateUuidV7(Date.now() - 70000),
+      uid: 'user-coord-1',
+      email: 'shneur@chabadneveyosef.org',
+      displayName: 'שניאור זלמן לוי (רכז פעילות וקהילה)',
+      username: 'shneur',
+      passwordHash: encryptSensitiveString('123456'),
+      roleTemplate: 'coordinator',
+      isBlocked: false,
+      sessionVersion: 1,
+      permissionsJson: JSON.stringify(coordDef.domains),
+      sensitivePermissionsJson: JSON.stringify(coordDef.sensitive),
+      createdAt: now,
+      updatedAt: now,
+    },
+  ];
+}
 
 export function buildSeedTemplates(): DynamicTemplateRecord[] {
   const now = new Date().toISOString();

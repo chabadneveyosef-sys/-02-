@@ -11,6 +11,9 @@ import {
   Printer,
   Database,
   Code2,
+  UserPlus,
+  UserCheck,
+  MapPin,
 } from 'lucide-react';
 import {
   ParsedUserRecord,
@@ -21,6 +24,7 @@ import {
   FinancialTransactionRecord,
   DonorContactRecord,
   VolunteerEntityRecord,
+  MapDefaultLocationConfig,
 } from '../types/erp';
 import {
   PermissionDomain,
@@ -50,6 +54,16 @@ interface RbacSettingsViewProps {
   transactions: FinancialTransactionRecord[];
   donors: DonorContactRecord[];
   communityEntities: VolunteerEntityRecord[];
+  defaultMapLocation: MapDefaultLocationConfig;
+  onUpdateDefaultMapLocation: (config: MapDefaultLocationConfig) => Promise<void>;
+  onSwitchActiveUser?: (userId: string) => void;
+  onRegisterNewUser: (data: {
+    displayName: string;
+    email: string;
+    username: string;
+    passwordPlain: string;
+    roleTemplate: RoleTemplateName;
+  }) => Promise<void>;
   onUpdateUserRoleAndPermissions: (
     targetUser: ParsedUserRecord,
     newRole: RoleTemplateName,
@@ -81,6 +95,10 @@ export const RbacSettingsView: React.FC<RbacSettingsViewProps> = ({
   transactions,
   donors,
   communityEntities,
+  defaultMapLocation,
+  onUpdateDefaultMapLocation,
+  onSwitchActiveUser,
+  onRegisterNewUser,
   onUpdateUserRoleAndPermissions,
   onSaveTemplate,
   onRestoreBackupData,
@@ -91,6 +109,20 @@ export const RbacSettingsView: React.FC<RbacSettingsViewProps> = ({
   >('rbac');
   const [safetyError, setSafetyError] = useState<string | null>(null);
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
+
+  // New user registration state
+  const [showRegisterUserForm, setShowRegisterUserForm] = useState(false);
+  const [regDisplayName, setRegDisplayName] = useState('');
+  const [regEmail, setRegEmail] = useState('');
+  const [regUsername, setRegUsername] = useState('');
+  const [regPassword, setRegPassword] = useState('');
+  const [regRole, setRegRole] = useState<RoleTemplateName>('coordinator');
+
+  // Map Default Location quick editor inside settings
+  const [mapLocName, setMapLocName] = useState(defaultMapLocation.locationName);
+  const [mapLat, setMapLat] = useState(String(defaultMapLocation.lat));
+  const [mapLng, setMapLng] = useState(String(defaultMapLocation.lng));
+  const [mapZoom, setMapZoom] = useState(String(defaultMapLocation.zoom || 16));
 
   // New template state
   const [tplName, setTplName] = useState('');
@@ -110,6 +142,27 @@ export const RbacSettingsView: React.FC<RbacSettingsViewProps> = ({
   const canManageUsers = currentUser.sensitivePermissions.manage_users;
   const canExport = currentUser.sensitivePermissions.export_data;
   const canRestore = currentUser.sensitivePermissions.restore_backup;
+
+  const handleCreateUserSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!regDisplayName.trim() || !regUsername.trim() || !regPassword.trim() || !canManageUsers) {
+      return;
+    }
+    setSafetyError(null);
+    await onRegisterNewUser({
+      displayName: regDisplayName.trim(),
+      email: regEmail.trim() || `${regUsername.trim()}@chabad.local`,
+      username: regUsername.trim(),
+      passwordPlain: regPassword.trim(),
+      roleTemplate: regRole,
+    });
+    setRegDisplayName('');
+    setRegEmail('');
+    setRegUsername('');
+    setRegPassword('');
+    setShowRegisterUserForm(false);
+    setBackupMessage(`המשתמש "${regDisplayName.trim()}" נרשם למערכת בהצלחה עם תבנית הרשאות "${ROLE_TEMPLATE_LABELS[regRole]}".`);
+  };
 
   const handleRoleTemplateSelect = async (user: ParsedUserRecord, newRole: RoleTemplateName) => {
     setSafetyError(null);
@@ -271,7 +324,6 @@ export const RbacSettingsView: React.FC<RbacSettingsViewProps> = ({
     const file = e.target.files?.[0];
     if (!file || !canRestore) return;
     try {
-      // שמירת גיבוי אוטומטי בזיכרון המקומי לפני שחזור/מיגרציה
       localStorage.setItem(
         'chabad_erp_pre_migration_auto_backup',
         JSON.stringify({ timestamp: new Date().toISOString(), activities, tasks, transactions, donors })
@@ -299,59 +351,72 @@ export const RbacSettingsView: React.FC<RbacSettingsViewProps> = ({
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-4">
         <div>
           <h2 className="text-2xl font-bold text-slate-900">
-            אבטחה, הרשאות גמישות (RBAC), יומן ביקורת, גיבויים ובדיקות יחידה
+            רישום משתמשים, מערך הרשאות גמיש (RBAC), יומן ביקורת וגיבוי מוצפן
           </h2>
           <p className="text-sm text-slate-600">
-            4 רמות גישה לכל תחום, הרשאות רגישות נפרדות, מניעת השארת המערכת ללא מנהל פעיל, ויומן שינויים מלא.
+            רישום משתמשים חדשים למערכת, אכיפת 4 רמות גישה לכל תחום, הרשאות רגישות, מניעת השארת המערכת ללא מנהל פעיל ויומן ביקורת מלא.
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-1 p-1 bg-slate-100 rounded-lg">
-          <button
-            type="button"
-            onClick={() => setActiveTab('rbac')}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-              activeTab === 'rbac' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'
-            }`}
-          >
-            משתמשים והרשאות (RBAC)
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('audit')}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-              activeTab === 'audit' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'
-            }`}
-          >
-            יומן שינויים וביקורת ({auditLogs.length})
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('backup_export')}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-              activeTab === 'backup_export' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'
-            }`}
-          >
-            ייצוא, גיבוי מוצפן ועדכון גרסאות
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('templates')}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-              activeTab === 'templates' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'
-            }`}
-          >
-            תבניות דינמיות (JSON Schema)
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('unit_tests')}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-              activeTab === 'unit_tests' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'
-            }`}
-          >
-            בדיקות יחידה ואדריכלות
-          </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1 p-1 bg-slate-100 rounded-lg">
+            <button
+              type="button"
+              onClick={() => setActiveTab('rbac')}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                activeTab === 'rbac' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'
+              }`}
+            >
+              משתמשים והרשאות ({users.filter((u) => !u.deletedAt).length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('audit')}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                activeTab === 'audit' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'
+              }`}
+            >
+              יומן שינויים וביקורת ({auditLogs.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('backup_export')}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                activeTab === 'backup_export' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'
+              }`}
+            >
+              ייצוא, גיבוי ומיקום ברירת מחדל
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('templates')}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                activeTab === 'templates' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'
+              }`}
+            >
+              תבניות דינמיות (JSON Schema)
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('unit_tests')}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                activeTab === 'unit_tests' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'
+              }`}
+            >
+              בדיקות יחידה ואדריכלות
+            </button>
+          </div>
+
+          {canManageUsers && activeTab === 'rbac' && (
+            <button
+              type="button"
+              onClick={() => setShowRegisterUserForm(!showRegisterUserForm)}
+              className="px-4 py-2 bg-slate-900 text-white text-xs font-semibold rounded-lg hover:bg-slate-800 flex items-center gap-1.5 whitespace-nowrap"
+            >
+              <UserPlus className="w-4 h-4" />
+              <span>+ רישום משתמש חדש למערכת</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -381,126 +446,261 @@ export const RbacSettingsView: React.FC<RbacSettingsViewProps> = ({
 
       {activeTab === 'rbac' && (
         <div className="space-y-6">
+          {/* טופס רישום משתמש חדש למערכת */}
+          {showRegisterUserForm && canManageUsers && (
+            <form
+              onSubmit={handleCreateUserSubmit}
+              className="bg-white border border-slate-200 rounded-xl p-6 space-y-4"
+            >
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                  <UserPlus className="w-4 h-4 text-slate-800" />
+                  <span>רישום משתמש חדש והקצאת תבנית הרשאות</span>
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setShowRegisterUserForm(false)}
+                  className="text-xs text-slate-500 hover:text-slate-900"
+                >
+                  ביטול ✕
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    שם מלא לתצוגה *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={regDisplayName}
+                    onChange={(e) => setRegDisplayName(e.target.value)}
+                    placeholder="למשל: הרב יוסף לוי"
+                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    שם משתמש לכניסה *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={regUsername}
+                    onChange={(e) => setRegUsername(e.target.value)}
+                    placeholder="למשל: yossi"
+                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    סיסמה ראשונית *
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={regPassword}
+                    onChange={(e) => setRegPassword(e.target.value)}
+                    placeholder="לפחות 4 תווים"
+                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    כתובת אימייל (לסנכרון ענן)
+                  </label>
+                  <input
+                    type="email"
+                    value={regEmail}
+                    onChange={(e) => setRegEmail(e.target.value)}
+                    placeholder="user@gmail.com"
+                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    תבנית תפקיד התחלתית *
+                  </label>
+                  <select
+                    value={regRole}
+                    onChange={(e) => setRegRole(e.target.value as RoleTemplateName)}
+                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg bg-white font-semibold"
+                  >
+                    {(Object.keys(ROLE_TEMPLATE_LABELS) as RoleTemplateName[]).map((r) => (
+                      <option key={r} value={r}>
+                        {ROLE_TEMPLATE_LABELS[r]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowRegisterUserForm(false)}
+                  className="px-4 py-1.5 text-xs text-slate-600"
+                >
+                  ביטול
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-1.5 bg-slate-900 text-white text-xs font-semibold rounded-lg hover:bg-slate-800"
+                >
+                  רשום משתמש והפעל הרשאות
+                </button>
+              </div>
+            </form>
+          )}
+
           {users
             .filter((u) => !u.deletedAt)
-            .map((user) => (
-              <div
-                key={user.id}
-                className="bg-white border border-slate-200 rounded-xl p-6 space-y-4"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <Shield className="w-4 h-4 text-slate-800" />
-                      <span className="font-bold text-base text-slate-900">{user.displayName}</span>
-                      <span className="text-xs text-slate-500 font-mono">({user.email})</span>
-                    </div>
-                    <div className="text-xs text-slate-500 mt-1 font-mono">
-                      UUIDv7: {user.id} · גרסת סשן פעיל: #{user.sessionVersion}
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-3">
+            .map((user) => {
+              const isCurrentActive = user.id === currentUser.id || user.uid === currentUser.uid;
+              return (
+                <div
+                  key={user.id}
+                  className={`bg-white border rounded-xl p-6 space-y-4 ${
+                    isCurrentActive ? 'border-slate-900' : 'border-slate-200'
+                  }`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4">
                     <div>
-                      <label className="block text-[11px] text-slate-500 mb-0.5">תבנית תפקיד (נקודת מוצא):</label>
-                      <select
-                        disabled={!canManageUsers}
-                        value={user.roleTemplate}
-                        onChange={(e) =>
-                          handleRoleTemplateSelect(user, e.target.value as RoleTemplateName)
-                        }
-                        className="px-3 py-1.5 text-xs border border-slate-300 rounded-lg bg-white font-semibold"
-                      >
-                        {(Object.keys(ROLE_TEMPLATE_LABELS) as RoleTemplateName[]).map((r) => (
-                          <option key={r} value={r}>
-                            {ROLE_TEMPLATE_LABELS[r]}
-                          </option>
-                        ))}
-                      </select>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Shield className="w-4 h-4 text-slate-800" />
+                        <span className="font-bold text-base text-slate-900">{user.displayName}</span>
+                        <span className="text-xs text-slate-500 font-mono">({user.email})</span>
+                        {user.username && (
+                          <span className="text-xs text-slate-600 font-mono">
+                            · שם משתמש: <strong>{user.username}</strong>
+                          </span>
+                        )}
+                        {isCurrentActive && (
+                          <span className="text-xs font-bold text-emerald-700">
+                            · מחובר כעת
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs text-slate-500 mt-1 font-mono">
+                        UUIDv7: {user.id} · גרסת סשן פעיל: #{user.sessionVersion}
+                      </div>
                     </div>
 
-                    {canManageUsers && (
-                      <button
-                        type="button"
-                        onClick={() => handleToggleBlockUser(user)}
-                        className={`px-3 py-2 text-xs font-semibold rounded-lg flex items-center gap-1.5 ${
-                          user.isBlocked
-                            ? 'bg-emerald-700 text-white hover:bg-emerald-800'
-                            : 'bg-red-50 text-red-700 border border-red-200 hover:bg-red-100'
-                        }`}
-                      >
-                        {user.isBlocked ? (
-                          <>
-                            <Unlock className="w-3.5 h-3.5" />
-                            בטל חסימת משתמש
-                          </>
-                        ) : (
-                          <>
-                            <Lock className="w-3.5 h-3.5" />
-                            חסום ונתק סשנים פעילים
-                          </>
-                        )}
-                      </button>
-                    )}
-                  </div>
-                </div>
+                    <div className="flex flex-wrap items-center gap-3">
+                      {onSwitchActiveUser && !isCurrentActive && !user.isBlocked && (
+                        <button
+                          type="button"
+                          onClick={() => onSwitchActiveUser(user.id)}
+                          className="px-3 py-1.5 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-900 rounded-lg flex items-center gap-1.5"
+                          title="עבור לעבוד תחת משתמש זה כדי לבדוק את הרשאותיו בזמן אמת"
+                        >
+                          <UserCheck className="w-3.5 h-3.5" />
+                          <span>הפעל כמשתמש פעיל</span>
+                        </button>
+                      )}
 
-                {/* 8 Domain Permissions Grid */}
-                <div>
-                  <h4 className="text-xs font-bold text-slate-700 mb-2">
-                    הרשאות גרנולאריות לפי תחום (4 רמות גישה לכל תחום):
-                  </h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                    {(Object.keys(PERMISSION_DOMAIN_LABELS) as PermissionDomain[]).map((dom) => (
-                      <div key={dom} className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
-                        <label className="block text-xs font-semibold text-slate-800 mb-1">
-                          {PERMISSION_DOMAIN_LABELS[dom]}
-                        </label>
+                      <div>
+                        <label className="block text-[11px] text-slate-500 mb-0.5">תבנית תפקיד (נקודת מוצא):</label>
                         <select
                           disabled={!canManageUsers}
-                          value={user.permissions[dom] || 'none'}
+                          value={user.roleTemplate}
                           onChange={(e) =>
-                            handleDomainLevelChange(user, dom, e.target.value as AccessLevel)
+                            handleRoleTemplateSelect(user, e.target.value as RoleTemplateName)
                           }
-                          className="w-full px-2 py-1 text-xs border border-slate-300 rounded bg-white"
+                          className="px-3 py-1.5 text-xs border border-slate-300 rounded-lg bg-white font-semibold"
                         >
-                          {(Object.keys(ACCESS_LEVEL_LABELS) as AccessLevel[]).map((lvl) => (
-                            <option key={lvl} value={lvl}>
-                              {ACCESS_LEVEL_LABELS[lvl]}
+                          {(Object.keys(ROLE_TEMPLATE_LABELS) as RoleTemplateName[]).map((r) => (
+                            <option key={r} value={r}>
+                              {ROLE_TEMPLATE_LABELS[r]}
                             </option>
                           ))}
                         </select>
                       </div>
-                    ))}
-                  </div>
-                </div>
 
-                {/* 4 Sensitive Permissions */}
-                <div className="pt-2 border-t border-slate-100">
-                  <h4 className="text-xs font-bold text-slate-700 mb-2">
-                    הרשאות נפרדות לפעולות רגישות:
-                  </h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                    {(Object.keys(SENSITIVE_PERMISSION_LABELS) as SensitivePermission[]).map(
-                      (perm) => (
-                        <label
-                          key={perm}
-                          className="flex items-center gap-2 p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-800 cursor-pointer"
+                      {canManageUsers && (
+                        <button
+                          type="button"
+                          onClick={() => handleToggleBlockUser(user)}
+                          className={`px-3 py-2 text-xs font-semibold rounded-lg flex items-center gap-1.5 ${
+                            user.isBlocked
+                              ? 'bg-emerald-700 text-white hover:bg-emerald-800'
+                              : 'bg-red-50 text-red-700 border border-red-200 hover:bg-red-100'
+                          }`}
                         >
-                          <input
-                            type="checkbox"
+                          {user.isBlocked ? (
+                            <>
+                              <Unlock className="w-3.5 h-3.5" />
+                              בטל חסימת משתמש
+                            </>
+                          ) : (
+                            <>
+                              <Lock className="w-3.5 h-3.5" />
+                              חסום ונתק סשנים פעילים
+                            </>
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 8 Domain Permissions Grid */}
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-700 mb-2">
+                      הרשאות גרנולאריות לפי תחום (4 רמות גישה לכל תחום):
+                    </h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                      {(Object.keys(PERMISSION_DOMAIN_LABELS) as PermissionDomain[]).map((dom) => (
+                        <div key={dom} className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
+                          <label className="block text-xs font-semibold text-slate-800 mb-1">
+                            {PERMISSION_DOMAIN_LABELS[dom]}
+                          </label>
+                          <select
                             disabled={!canManageUsers}
-                            checked={Boolean(user.sensitivePermissions[perm])}
-                            onChange={() => handleSensitiveToggle(user, perm)}
-                          />
-                          <span>{SENSITIVE_PERMISSION_LABELS[perm]}</span>
-                        </label>
-                      )
-                    )}
+                            value={user.permissions[dom] || 'none'}
+                            onChange={(e) =>
+                              handleDomainLevelChange(user, dom, e.target.value as AccessLevel)
+                            }
+                            className="w-full px-2 py-1 text-xs border border-slate-300 rounded bg-white"
+                          >
+                            {(Object.keys(ACCESS_LEVEL_LABELS) as AccessLevel[]).map((lvl) => (
+                              <option key={lvl} value={lvl}>
+                                {ACCESS_LEVEL_LABELS[lvl]}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 4 Sensitive Permissions */}
+                  <div className="pt-2 border-t border-slate-100">
+                    <h4 className="text-xs font-bold text-slate-700 mb-2">
+                      הרשאות נפרדות לפעולות רגישות:
+                    </h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                      {(Object.keys(SENSITIVE_PERMISSION_LABELS) as SensitivePermission[]).map(
+                        (perm) => (
+                          <label
+                            key={perm}
+                            className="flex items-center gap-2 p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-800 cursor-pointer"
+                          >
+                            <input
+                              type="checkbox"
+                              disabled={!canManageUsers}
+                              checked={Boolean(user.sensitivePermissions[perm])}
+                              onChange={() => handleSensitiveToggle(user, perm)}
+                            />
+                            <span>{SENSITIVE_PERMISSION_LABELS[perm]}</span>
+                          </label>
+                        )
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
         </div>
       )}
 
@@ -511,30 +711,30 @@ export const RbacSettingsView: React.FC<RbacSettingsViewProps> = ({
               יומן שינויים וביקורת אבטחה (Audit Log — בלתי ניתן למחיקה)
             </h3>
             <p className="text-xs text-slate-500">
-              מתעד באופן אוטומטי כל שינוי הרשאה, חסימת משתמש, חשיפת תעודת זהות מוצפנת, ייצוא או שחזור גיבוי (מי, למי, מה, מתי).
+              מתעד באופן אוטומטי כל שינוי הרשאה, רישום משתמש, חסימה, חשיפת תעודת זהות מוצפנת, ביטול פעולה (Undo) או שחזור גיבוי.
             </p>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-right text-xs border-collapse">
+          <div className="overflow-x-auto max-h-[620px]">
+            <table className="erp-table text-right text-xs">
               <thead>
-                <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
-                  <th className="py-2.5 px-4">מתי (חותמת זמן)</th>
-                  <th className="py-2.5 px-4">מי ביצע</th>
-                  <th className="py-2.5 px-4">סוג פעולה</th>
-                  <th className="py-2.5 px-4">על מי / יעד</th>
-                  <th className="py-2.5 px-4">פירוט מלא</th>
+                <tr className="text-slate-700">
+                  <th className="py-3 px-4 col-compact">מתי (חותמת זמן)</th>
+                  <th className="py-3 px-4 col-compact">מי ביצע</th>
+                  <th className="py-3 px-4 col-compact">סוג פעולה</th>
+                  <th className="py-3 px-4 col-text-medium">על מי / יעד</th>
+                  <th className="py-3 px-5 col-text-wide">פירוט מלא של הפעולה ביומן הביקורת</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-200">
+              <tbody className="divide-y divide-slate-200/80">
                 {auditLogs.map((log) => (
-                  <tr key={log.id} className="hover:bg-slate-50">
-                    <td className="py-2.5 px-4 font-mono tabular-nums text-slate-500 whitespace-nowrap">
+                  <tr key={log.id} className="transition-colors">
+                    <td className="py-3 px-4 font-mono tabular-nums text-slate-600 whitespace-nowrap align-top">
                       {log.createdAt.replace('T', ' ').slice(0, 19)}
                     </td>
-                    <td className="py-2.5 px-4 font-semibold text-slate-900">{log.actorName}</td>
-                    <td className="py-2.5 px-4 font-semibold text-amber-900">{log.actionType}</td>
-                    <td className="py-2.5 px-4 text-slate-700">{log.targetName}</td>
-                    <td className="py-2.5 px-4 text-slate-600">{log.details}</td>
+                    <td className="py-3 px-4 font-bold text-slate-900 whitespace-nowrap align-top">{log.actorName}</td>
+                    <td className="py-3 px-4 font-bold text-amber-900 whitespace-nowrap align-top">{log.actionType}</td>
+                    <td className="py-3 px-4 text-slate-800 font-medium col-text-medium align-top">{log.targetName}</td>
+                    <td className="py-3 px-5 text-slate-700 col-text-wide align-top leading-relaxed">{log.details}</td>
                   </tr>
                 ))}
               </tbody>
@@ -566,7 +766,7 @@ export const RbacSettingsView: React.FC<RbacSettingsViewProps> = ({
               <button
                 type="button"
                 disabled={!canExport}
-                onClick={ async () => {
+                onClick={async () => {
                   await onLogExportAction('PDF Report Print');
                   window.print();
                 }}
@@ -601,30 +801,76 @@ export const RbacSettingsView: React.FC<RbacSettingsViewProps> = ({
             </div>
           </div>
 
-          <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-3">
-            <h3 className="text-base font-bold text-slate-900">
-              מדריך עדכון גרסאות פשוט ושקיפות תשתית חינמית
+          <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-4">
+            <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <MapPin className="w-5 h-5 text-slate-700" />
+              עריכת מיקום ברירת המחדל של המפה ושקיעת החמה
             </h3>
-            <div className="text-xs text-slate-700 space-y-2 leading-relaxed">
-              <p>
-                <strong>1. איך מעדכנים גרסה בבטחה (פקודות פשוטות):</strong><br />
-                לפני כל שדרוג, לחץ על <em>&quot;הורדת גיבוי מלא מוצפן&quot;</em>. המערכת בנויה ממודולים עצמאיים ושומרת אוטומטית עותק גיבוי לפני כל מיגרציה.
-              </p>
-              <p>
-                <strong>2. מגבלות השכבה החינמית ופתרונן המובנה:</strong>
-              </p>
-              <ul className="list-disc list-inside space-y-1 text-slate-600">
-                <li>
-                  <strong>התעוררות שרת (Cold Start):</strong> נפתר באמצעות מטמון אופליין מקומי (PWA) הטוען את המסך מיידית ומסתנכרן ברקע.
-                </li>
-                <li>
-                  <strong>מכסת קריאות יומית:</strong> קואורדינטות המפה נשמרות בבסיס הנתונים כך שלא מתבצעות קריאות Geocoding כפולות.
-                </li>
-                <li>
-                  <strong>הכנה לאפליקציית דסקטופ ומובייל מקומית:</strong> כל הרשומות משתמשות ב-<code>UUID v7</code> ובשדות <code>created_at</code>, <code>updated_at</code>, ו-<code>deleted_at</code> (מחיקה רכה) לסנכרון חלק.
-                </li>
-              </ul>
-            </div>
+            <p className="text-xs text-slate-600">
+              קבע את המיקום הגיאוגרפי הקבוע של בית חב״ד לטובת פתיחת מפת ה-GIS וחישוב אוטומטי של זמני שקיעת החמה בלוח העברי.
+            </p>
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                await onUpdateDefaultMapLocation({
+                  locationName: mapLocName.trim() || 'חיפה - נווה יוסף',
+                  lat: Number(parseFloat(mapLat).toFixed(5)) || 32.7842,
+                  lng: Number(parseFloat(mapLng).toFixed(5)) || 35.0195,
+                  zoom: Number(mapZoom) || 16,
+                });
+                setBackupMessage(`מיקום ברירת המחדל של המפה עודכן ל-"${mapLocName}" בהצלחה.`);
+              }}
+              className="space-y-3"
+            >
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">שם המיקום / השכונה</label>
+                <input
+                  type="text"
+                  value={mapLocName}
+                  onChange={(e) => setMapLocName(e.target.value)}
+                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg"
+                />
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">קו רוחב (Lat)</label>
+                  <input
+                    type="number"
+                    step="0.00001"
+                    value={mapLat}
+                    onChange={(e) => setMapLat(e.target.value)}
+                    className="w-full px-2.5 py-2 text-xs border border-slate-300 rounded-lg font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">קו אורך (Lng)</label>
+                  <input
+                    type="number"
+                    step="0.00001"
+                    value={mapLng}
+                    onChange={(e) => setMapLng(e.target.value)}
+                    className="w-full px-2.5 py-2 text-xs border border-slate-300 rounded-lg font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">תקריב (Zoom)</label>
+                  <input
+                    type="number"
+                    min="8"
+                    max="19"
+                    value={mapZoom}
+                    onChange={(e) => setMapZoom(e.target.value)}
+                    className="w-full px-2.5 py-2 text-xs border border-slate-300 rounded-lg font-mono"
+                  />
+                </div>
+              </div>
+              <button
+                type="submit"
+                className="px-4 py-2 bg-slate-900 text-white text-xs font-semibold rounded-lg hover:bg-slate-800"
+              >
+                שמור מיקום ברירת מחדל
+              </button>
+            </form>
           </div>
         </div>
       )}

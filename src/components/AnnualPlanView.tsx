@@ -80,6 +80,12 @@ export const AnnualPlanView: React.FC<AnnualPlanViewProps> = ({
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | undefined>(undefined);
   const [statusFilter, setStatusFilter] = useState<'all' | 'red' | 'green' | 'blue'>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sortBy, setSortBy] = useState<'hebrew_date' | 'budget_desc' | 'title'>('hebrew_date');
+  const [inlineEditingId, setInlineEditingId] = useState<string | null>(null);
+  const [inlineNotesDraft, setInlineNotesDraft] = useState('');
+  const [inlineResponsibleDraft, setInlineResponsibleDraft] = useState('');
+  const [inlineLocationDraft, setInlineLocationDraft] = useState('');
 
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState('התוועדות');
@@ -107,10 +113,61 @@ export const AnnualPlanView: React.FC<AnnualPlanViewProps> = ({
       )
     );
 
-  const filteredActivities = activeActivities.filter((a) => {
-    if (statusFilter === 'all') return true;
-    return computeAnnualActivityStatus(a) === statusFilter;
-  });
+  const filteredActivities = activeActivities
+    .filter((a) => {
+      if (statusFilter !== 'all' && computeAnnualActivityStatus(a) !== statusFilter) {
+        return false;
+      }
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        return (
+          a.title.toLowerCase().includes(q) ||
+          a.category.toLowerCase().includes(q) ||
+          (a.notes || '').toLowerCase().includes(q) ||
+          (a.responsiblePerson || '').toLowerCase().includes(q) ||
+          (a.locationName || '').toLowerCase().includes(q) ||
+          a.hebrewDateDisplay.toLowerCase().includes(q)
+        );
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      if (sortBy === 'budget_desc') {
+        return (b.estimatedBudgetAgorot || 0) - (a.estimatedBudgetAgorot || 0);
+      }
+      if (sortBy === 'title') {
+        return a.title.localeCompare(b.title, 'he');
+      }
+      return compareHebrewDates(
+        { day: a.hebrewDay, month: a.hebrewMonth, year: a.hebrewYear },
+        { day: b.hebrewDay, month: b.hebrewMonth, year: b.hebrewYear }
+      );
+    });
+
+  const handleSaveInlineQuickEdit = async (act: AnnualActivityRecord) => {
+    if (!canWrite) return;
+    await onSaveActivity(
+      {
+        title: act.title,
+        category: act.category,
+        hebrewDay: act.hebrewDay,
+        hebrewMonth: act.hebrewMonth,
+        hebrewYear: act.hebrewYear,
+        hebrewDateDisplay: act.hebrewDateDisplay,
+        gregorianDate: act.gregorianDate,
+        sunsetTime: act.sunsetTime,
+        locationName: inlineLocationDraft.trim(),
+        responsiblePerson: inlineResponsibleDraft.trim(),
+        estimatedBudgetAgorot: act.estimatedBudgetAgorot,
+        isExecuted: act.isExecuted,
+        templateId: act.templateId,
+        customFieldsJson: act.customFieldsJson,
+        notes: inlineNotesDraft.trim(),
+      },
+      act.id
+    );
+    setInlineEditingId(null);
+  };
 
   const selectedTemplate = templates.find((t) => t.id === templateId && !t.deletedAt);
   let templateFields: DynamicTemplateField[] = [];
@@ -699,97 +756,187 @@ export const AnnualPlanView: React.FC<AnnualPlanViewProps> = ({
         </form>
       )}
 
-      {/* טבלת התוכנית השנתית — נקייה ממשימות (המשימות מופיעות רק בעמוד התכנון והמשימות) */}
-      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-right border-collapse">
+      {/* סרגל חיפוש ומיון מהיר בדומה לתוכנות ארגוניות מקובלות */}
+      <div className="bg-white border border-slate-300/80 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex-1 min-w-[240px]">
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="חיפוש מהיר בתוכנית השנתית (שם פעילות, הערות, אחראי, מיקום, חודש עברי)..."
+            className="w-full px-3.5 py-2 text-xs border border-slate-300 rounded-lg"
+          />
+        </div>
+        <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
+          <label className="flex items-center gap-1.5">
+            <span className="font-semibold text-slate-700">מיון טבלה:</span>
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as 'hebrew_date' | 'budget_desc' | 'title')}
+              className="px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg font-medium text-slate-800"
+            >
+              <option value="hebrew_date">לפי סדר החודשים העבריים (תשרי ← אלול)</option>
+              <option value="budget_desc">לפי גובה תקציב (מהגבוה לנמוך)</option>
+              <option value="title">לפי שם הפעילות (א-ת)</option>
+            </select>
+          </label>
+          <span className="text-slate-500 hidden sm:inline">
+            טיפ: לחיצה כפולה על תא טקסט מאפשרת עריכה מהירה במקום
+          </span>
+        </div>
+      </div>
+
+      {/* טבלת התוכנית השנתית — תאים מרובי-טקסט מקבלים רוחב נדיב באופן קבוע */}
+      <div className="bg-white border border-slate-300/90 rounded-xl overflow-hidden shadow-xs">
+        <div className="overflow-x-auto max-h-[680px]">
+          <table className="erp-table text-right">
             <thead>
-              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold text-slate-600">
-                <th className="py-3 px-4">סטטוס אוטומטי</th>
-                <th className="py-3 px-4">תאריך עברי (ראשי)</th>
-                <th className="py-3 px-4">לועזי ושקיעה</th>
-                <th className="py-3 px-4">פעילות וקטגוריה</th>
-                <th className="py-3 px-4">אחראי ומיקום</th>
-                <th className="py-3 px-4">תקציב משוער</th>
-                <th className="py-3 px-4 text-left">פעולות</th>
+              <tr className="text-xs font-semibold text-slate-700">
+                <th className="py-3.5 px-4 col-compact">סטטוס אוטומטי</th>
+                <th className="py-3.5 px-4 col-compact">תאריך עברי ולועזי</th>
+                <th className="py-3.5 px-5 col-text-wide">שם הפעילות, קטגוריה, הערות ודגשים מפורטים</th>
+                <th className="py-3.5 px-5 col-text-medium">אחראי פעילות ומיקום מדויק</th>
+                <th className="py-3.5 px-4 col-compact">תקציב משוער</th>
+                <th className="py-3.5 px-4 text-left col-compact">פעולות</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-200 text-sm">
+            <tbody className="divide-y divide-slate-200/80 text-sm">
               {filteredActivities.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-slate-500">
+                  <td colSpan={6} className="py-8 text-center text-slate-500">
                     לא נמצאו פעילויות בתוכנית השנתית התואמות לסינון הנוכחי.
                   </td>
                 </tr>
               ) : (
                 filteredActivities.map((act) => {
                   const status = computeAnnualActivityStatus(act);
+                  const isInlineEditing = inlineEditingId === act.id;
                   return (
-                    <tr key={act.id} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="py-3 px-4 whitespace-nowrap">
+                    <tr
+                      key={act.id}
+                      onDoubleClick={() => {
+                        if (!canWrite) return;
+                        setInlineEditingId(act.id);
+                        setInlineNotesDraft(act.notes || '');
+                        setInlineResponsibleDraft(act.responsiblePerson || '');
+                        setInlineLocationDraft(act.locationName || '');
+                      }}
+                      className="transition-colors"
+                    >
+                      <td className="py-3.5 px-4 whitespace-nowrap align-top">
                         {status === 'blue' && (
-                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700">
+                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-800">
                             <CheckCircle2 className="w-4 h-4 shrink-0" />
                             <span>כחול · בוצע</span>
                           </span>
                         )}
                         {status === 'green' && (
-                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700">
+                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-800">
                             <Clock className="w-4 h-4 shrink-0" />
                             <span>ירוק · תקין ומלא</span>
                           </span>
                         )}
                         {status === 'red' && (
-                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-red-600">
+                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-red-700">
                             <AlertTriangle className="w-4 h-4 shrink-0" />
                             <span>אדום · חסרים שדות חובה</span>
                           </span>
                         )}
                       </td>
-                      <td className="py-3 px-4 font-bold text-slate-900 whitespace-nowrap">
-                        {act.hebrewDateDisplay}
-                      </td>
-                      <td className="py-3 px-4 text-xs text-slate-500 font-mono tabular-nums whitespace-nowrap">
-                        {act.gregorianDate} · שקיעה {act.sunsetTime || '17:30'}
-                      </td>
-                      <td className="py-3 px-4">
-                        <div className="font-semibold text-slate-900">{act.title}</div>
-                        <div className="text-xs text-slate-500">
-                          {act.category}
-                          {act.notes ? ` · ${act.notes}` : ''}
+                      <td className="py-3.5 px-4 whitespace-nowrap align-top">
+                        <div className="font-bold text-slate-900">{act.hebrewDateDisplay}</div>
+                        <div className="text-xs text-slate-600 font-mono tabular-nums mt-0.5">
+                          {act.gregorianDate} · שקיעה {act.sunsetTime || '17:30'}
                         </div>
                       </td>
-                      <td className="py-3 px-4 text-xs">
-                        <div className="text-slate-900 font-medium">
-                          {act.responsiblePerson || (
-                            <span className="text-red-600">חסר אחראי</span>
-                          )}
+                      <td className="py-3.5 px-5 col-text-wide align-top">
+                        <div className="font-bold text-slate-900 text-base leading-snug">
+                          {act.title}
                         </div>
-                        <div className="text-slate-500">
-                          {act.locationName || <span className="text-red-600">חסר מיקום</span>}
+                        <div className="text-xs text-slate-700 mt-1 leading-relaxed">
+                          <span className="font-semibold text-slate-800">{act.category}</span>
+                          {act.notes ? ` · ${act.notes}` : ' · (ללא הערות נוספות — לחץ פעמיים לעריכה מהירה)'}
                         </div>
+                        {isInlineEditing && (
+                          <div className="mt-2 pt-2 border-t border-slate-300/70 space-y-2">
+                            <input
+                              type="text"
+                              value={inlineNotesDraft}
+                              onChange={(e) => setInlineNotesDraft(e.target.value)}
+                              placeholder="עריכת הערות ודגשים לפעילות..."
+                              className="w-full px-2.5 py-1.5 text-xs border border-slate-400 rounded-md"
+                            />
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleSaveInlineQuickEdit(act)}
+                                className="px-2.5 py-1 bg-slate-900 text-white text-xs font-semibold rounded"
+                              >
+                                שמור שינויים מהירים
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setInlineEditingId(null)}
+                                className="px-2 py-1 text-xs text-slate-600 hover:text-slate-900"
+                              >
+                                ביטול
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </td>
-                      <td className="py-3 px-4 font-mono tabular-nums text-sm">
+                      <td className="py-3.5 px-5 col-text-medium align-top text-xs">
+                        {isInlineEditing ? (
+                          <div className="space-y-1.5">
+                            <input
+                              type="text"
+                              value={inlineResponsibleDraft}
+                              onChange={(e) => setInlineResponsibleDraft(e.target.value)}
+                              placeholder="אחראי פעילות..."
+                              className="w-full px-2 py-1 text-xs border border-slate-400 rounded"
+                            />
+                            <input
+                              type="text"
+                              value={inlineLocationDraft}
+                              onChange={(e) => setInlineLocationDraft(e.target.value)}
+                              placeholder="מיקום מדויק..."
+                              className="w-full px-2 py-1 text-xs border border-slate-400 rounded"
+                            />
+                          </div>
+                        ) : (
+                          <>
+                            <div className="text-slate-900 font-semibold text-sm">
+                              {act.responsiblePerson || (
+                                <span className="text-red-700">חסר אחראי</span>
+                              )}
+                            </div>
+                            <div className="text-slate-600 mt-0.5 leading-relaxed">
+                              {act.locationName || <span className="text-red-700">חסר מיקום</span>}
+                            </div>
+                          </>
+                        )}
+                      </td>
+                      <td className="py-3.5 px-4 font-mono tabular-nums text-sm whitespace-nowrap align-top font-semibold">
                         {act.estimatedBudgetAgorot && act.estimatedBudgetAgorot > 0 ? (
                           formatAgorotToIls(act.estimatedBudgetAgorot)
                         ) : (
-                          <span className="text-xs text-red-600 font-sans">חסר תקציב</span>
+                          <span className="text-xs text-red-700 font-sans">חסר תקציב</span>
                         )}
                       </td>
-                      <td className="py-3 px-4 text-left whitespace-nowrap">
+                      <td className="py-3.5 px-4 text-left whitespace-nowrap align-top">
                         {canWrite && (
                           <div className="inline-flex items-center gap-2">
                             <button
                               type="button"
                               onClick={() => onToggleExecuted(act)}
-                              className="px-2.5 py-1 text-xs font-medium border border-slate-200 rounded hover:bg-slate-100 text-slate-700"
+                              className="px-2.5 py-1 text-xs font-medium border border-slate-300 rounded hover:bg-slate-200/70 text-slate-800"
                             >
                               {act.isExecuted ? 'בטל ביצוע' : 'סמן בוצע'}
                             </button>
                             <button
                               type="button"
                               onClick={() => openEditForm(act)}
-                              className="p-1.5 text-slate-600 hover:text-slate-900 rounded hover:bg-slate-100"
+                              className="p-1.5 text-slate-700 hover:text-slate-900 rounded hover:bg-slate-200/70"
                               title="ערוך"
                             >
                               <Edit3 className="w-4 h-4" />
@@ -797,7 +944,7 @@ export const AnnualPlanView: React.FC<AnnualPlanViewProps> = ({
                             <button
                               type="button"
                               onClick={() => onSoftDeleteActivity(act.id)}
-                              className="p-1.5 text-red-600 hover:text-red-800 rounded hover:bg-red-50"
+                              className="p-1.5 text-red-700 hover:text-red-900 rounded hover:bg-red-100/60"
                               title="מחיקה רכה"
                             >
                               <Trash2 className="w-4 h-4" />
@@ -810,6 +957,24 @@ export const AnnualPlanView: React.FC<AnnualPlanViewProps> = ({
                 })
               )}
             </tbody>
+            {filteredActivities.length > 0 && (
+              <tfoot>
+                <tr className="border-t-2 border-slate-300 bg-slate-100 text-xs font-bold text-slate-800">
+                  <td colSpan={4} className="py-3 px-4">
+                    סה״כ בשורות המוצגות ({filteredActivities.length} פעילויות):
+                  </td>
+                  <td className="py-3 px-4 font-mono tabular-nums text-sm text-slate-900">
+                    {formatAgorotToIls(
+                      filteredActivities.reduce(
+                        (acc, item) => acc + (item.estimatedBudgetAgorot || 0),
+                        0
+                      )
+                    )}
+                  </td>
+                  <td className="py-3 px-4" />
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
       </div>

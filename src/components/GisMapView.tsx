@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, useMapEvents } from 'react-leaflet';
+import React, { useState, useEffect } from 'react';
+import { MapContainer, TileLayer, Marker, Popup, useMapEvents, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import {
   MapPin,
@@ -11,8 +11,11 @@ import {
   Edit3,
   Trash2,
   UserPlus,
+  Compass,
+  Settings,
+  Check,
 } from 'lucide-react';
-import { DonorContactRecord, VolunteerEntityRecord } from '../types/erp';
+import { DonorContactRecord, VolunteerEntityRecord, MapDefaultLocationConfig } from '../types/erp';
 import { encryptSensitiveString } from '../lib/erp-core';
 
 const defaultIcon = L.divIcon({
@@ -40,6 +43,8 @@ interface GisMapViewProps {
   donors: DonorContactRecord[];
   communityEntities: VolunteerEntityRecord[];
   canWrite: boolean;
+  defaultMapLocation: MapDefaultLocationConfig;
+  onUpdateDefaultMapLocation: (config: MapDefaultLocationConfig) => Promise<void>;
   onUpdateDonorCoords: (donorId: string, lat: number, lng: number) => Promise<void>;
   onSaveDonor: (
     data: Omit<DonorContactRecord, 'id' | 'createdAt' | 'updatedAt'>,
@@ -59,10 +64,20 @@ const MapClickCapture: React.FC<{ onPickCoords: (lat: number, lng: number) => vo
   return null;
 };
 
+const MapViewSyncer: React.FC<{ lat: number; lng: number; zoom: number }> = ({ lat, lng, zoom }) => {
+  const map = useMap();
+  useEffect(() => {
+    map.setView([lat, lng], zoom, { animate: true });
+  }, [map, lat, lng, zoom]);
+  return null;
+};
+
 export const GisMapView: React.FC<GisMapViewProps> = ({
   donors,
   communityEntities,
   canWrite,
+  defaultMapLocation,
+  onUpdateDefaultMapLocation,
   onUpdateDonorCoords,
   onSaveDonor,
   onSoftDeleteDonor,
@@ -72,14 +87,31 @@ export const GisMapView: React.FC<GisMapViewProps> = ({
   const activeDonors = donors.filter((d) => !d.deletedAt);
   const activeEntities = communityEntities.filter((e) => !e.deletedAt);
 
-  const initialDonor = activeDonors.find((d) => typeof d.lat === 'number' && typeof d.lng === 'number');
-  const [centerLat, setCenterLat] = useState(initialDonor?.lat || 32.7842);
-  const [centerLng, setCenterLng] = useState(initialDonor?.lng || 35.0195);
-  const [selectedLat, setSelectedLat] = useState(initialDonor?.lat || 32.7842);
-  const [selectedLng, setSelectedLng] = useState(initialDonor?.lng || 35.0195);
+  const [centerLat, setCenterLat] = useState(defaultMapLocation.lat);
+  const [centerLng, setCenterLng] = useState(defaultMapLocation.lng);
+  const [mapZoom, setMapZoom] = useState(defaultMapLocation.zoom || 16);
+  const [selectedLat, setSelectedLat] = useState(defaultMapLocation.lat);
+  const [selectedLng, setSelectedLng] = useState(defaultMapLocation.lng);
   const [selectedBuildingAddress, setSelectedBuildingAddress] = useState(
-    initialDonor?.address || 'רחוב יד לבנים, נווה יוסף, חיפה'
+    defaultMapLocation.locationName || 'רחוב יד לבנים, נווה יוסף, חיפה'
   );
+
+  // Default Map Location Editor state
+  const [showDefaultLocEditor, setShowDefaultLocEditor] = useState(false);
+  const [defNameDraft, setDefNameDraft] = useState(defaultMapLocation.locationName);
+  const [defLatDraft, setDefLatDraft] = useState(String(defaultMapLocation.lat));
+  const [defLngDraft, setDefLngDraft] = useState(String(defaultMapLocation.lng));
+  const [defZoomDraft, setDefZoomDraft] = useState(String(defaultMapLocation.zoom || 16));
+  const [defSearchQuery, setDefSearchQuery] = useState('');
+  const [isSearchingDefLoc, setIsSearchingDefLoc] = useState(false);
+  const [defSaveToast, setDefSaveToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    setDefNameDraft(defaultMapLocation.locationName);
+    setDefLatDraft(String(defaultMapLocation.lat));
+    setDefLngDraft(String(defaultMapLocation.lng));
+    setDefZoomDraft(String(defaultMapLocation.zoom || 16));
+  }, [defaultMapLocation]);
 
   // Resident Add / Edit state for the selected building
   const [showResidentForm, setShowResidentForm] = useState(false);
@@ -113,6 +145,64 @@ export const GisMapView: React.FC<GisMapViewProps> = ({
     return coordMatch || addrMatch;
   });
 
+  const handleSearchDefaultLocationByAddress = async () => {
+    if (!defSearchQuery.trim()) return;
+    setIsSearchingDefLoc(true);
+    try {
+      const q = encodeURIComponent(`${defSearchQuery.trim()} Israel`);
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${q}&limit=1&accept-language=he`);
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        const lat = Number(parseFloat(data[0].lat).toFixed(5));
+        const lng = Number(parseFloat(data[0].lon).toFixed(5));
+        setDefLatDraft(String(lat));
+        setDefLngDraft(String(lng));
+        setDefNameDraft(defSearchQuery.trim());
+        setCenterLat(lat);
+        setCenterLng(lng);
+        setSelectedLat(lat);
+        setSelectedLng(lng);
+      }
+    } catch {
+      // ignore network error
+    } finally {
+      setIsSearchingDefLoc(false);
+    }
+  };
+
+  const handleSaveDefaultLocation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const lat = Number(parseFloat(defLatDraft).toFixed(5)) || 32.7842;
+    const lng = Number(parseFloat(defLngDraft).toFixed(5)) || 35.0195;
+    const zoom = Math.min(19, Math.max(8, Number(defZoomDraft) || 16));
+    const locationName = defNameDraft.trim() || 'מרכז בית חב״ד';
+
+    await onUpdateDefaultMapLocation({ locationName, lat, lng, zoom });
+    setCenterLat(lat);
+    setCenterLng(lng);
+    setMapZoom(zoom);
+    setSelectedLat(lat);
+    setSelectedLng(lng);
+    setSelectedBuildingAddress(locationName);
+    setShowDefaultLocEditor(false);
+    setDefSaveToast(`מיקום ברירת המחדל של המפה עודכן ל-"${locationName}" (${lat}, ${lng})`);
+    setTimeout(() => setDefSaveToast(null), 4000);
+  };
+
+  const handleSetPickedPointAsDefault = async () => {
+    const locationName = selectedBuildingAddress || defaultMapLocation.locationName;
+    await onUpdateDefaultMapLocation({
+      locationName,
+      lat: selectedLat,
+      lng: selectedLng,
+      zoom: mapZoom,
+    });
+    setCenterLat(selectedLat);
+    setCenterLng(selectedLng);
+    setDefSaveToast(`הנקודה שנבחרה על המפה (${locationName}) נקבעה כמיקום ברירת המחדל!`);
+    setTimeout(() => setDefSaveToast(null), 4000);
+  };
+
   const handleSelectBuildingLocation = async (lat: number, lng: number, knownAddress?: string) => {
     setSelectedLat(lat);
     setSelectedLng(lng);
@@ -124,7 +214,6 @@ export const GisMapView: React.FC<GisMapViewProps> = ({
       return;
     }
 
-    // Check if there is an existing resident right at this spot
     const nearby = activeDonors.find(
       (d) =>
         typeof d.lat === 'number' &&
@@ -137,7 +226,6 @@ export const GisMapView: React.FC<GisMapViewProps> = ({
       return;
     }
 
-    // Reverse geocode building address from OpenStreetMap Nominatim
     try {
       const res = await fetch(
         `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&accept-language=he`
@@ -152,7 +240,7 @@ export const GisMapView: React.FC<GisMapViewProps> = ({
         setSelectedBuildingAddress(`בניין בנקודה (${lat.toFixed(4)}, ${lng.toFixed(4)})`);
       }
     } catch {
-      setSelectedBuildingAddress(`בניין בנווה יוסף (${lat.toFixed(4)}, ${lng.toFixed(4)})`);
+      setSelectedBuildingAddress(`בניין בנקודה (${lat.toFixed(4)}, ${lng.toFixed(4)})`);
     }
   };
 
@@ -184,7 +272,7 @@ export const GisMapView: React.FC<GisMapViewProps> = ({
       ? activeDonors.find((d) => d.id === editingResidentId)
       : undefined;
 
-    const finalAddress = resAddress.trim() || selectedBuildingAddress || 'נווה יוסף, חיפה';
+    const finalAddress = resAddress.trim() || selectedBuildingAddress || defaultMapLocation.locationName;
     setSelectedBuildingAddress(finalAddress);
 
     await onSaveDonor(
@@ -232,16 +320,16 @@ export const GisMapView: React.FC<GisMapViewProps> = ({
         setSelectedLng(lng);
         setSelectedBuildingAddress(donor.address);
       } else {
-        const offsetLat = Number((32.784 + (Math.random() - 0.5) * 0.006).toFixed(5));
-        const offsetLng = Number((35.0195 + (Math.random() - 0.5) * 0.006).toFixed(5));
+        const offsetLat = Number((defaultMapLocation.lat + (Math.random() - 0.5) * 0.006).toFixed(5));
+        const offsetLng = Number((defaultMapLocation.lng + (Math.random() - 0.5) * 0.006).toFixed(5));
         await onUpdateDonorCoords(donor.id, offsetLat, offsetLng);
         setSelectedLat(offsetLat);
         setSelectedLng(offsetLng);
         setSelectedBuildingAddress(donor.address);
       }
     } catch {
-      const offsetLat = Number((32.784 + (Math.random() - 0.5) * 0.006).toFixed(5));
-      const offsetLng = Number((35.0195 + (Math.random() - 0.5) * 0.006).toFixed(5));
+      const offsetLat = Number((defaultMapLocation.lat + (Math.random() - 0.5) * 0.006).toFixed(5));
+      const offsetLng = Number((defaultMapLocation.lng + (Math.random() - 0.5) * 0.006).toFixed(5));
       await onUpdateDonorCoords(donor.id, offsetLat, offsetLng);
     } finally {
       setGeocodingDonorId(null);
@@ -272,53 +360,227 @@ export const GisMapView: React.FC<GisMapViewProps> = ({
             מפת קהילה ובניינים (GIS) — לחץ על כל בניין לצפייה ועריכת דיירים
           </h2>
           <p className="text-sm text-slate-600">
-            לחץ על מיקום של בניין או סיכה במפה כדי לראות מי גר שם, להוסיף דייר/משפחה לבניין, לערוך את פרטיהם או להסירם.
+            מיקום ברירת מחדל פעיל: <strong>{defaultMapLocation.locationName}</strong> ({defaultMapLocation.lat}, {defaultMapLocation.lng}). ניתן לערוך את מיקום ברירת המחדל או ללחוץ על כל בניין במפה.
           </p>
         </div>
 
-        <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={() => setLayerFilter('all')}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
-              layerFilter === 'all' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
-            }`}
+            onClick={() => {
+              setCenterLat(defaultMapLocation.lat);
+              setCenterLng(defaultMapLocation.lng);
+              setMapZoom(defaultMapLocation.zoom || 16);
+              setSelectedLat(defaultMapLocation.lat);
+              setSelectedLng(defaultMapLocation.lng);
+              setSelectedBuildingAddress(defaultMapLocation.locationName);
+            }}
+            className="px-3 py-1.5 text-xs font-semibold bg-white border border-slate-300 text-slate-800 rounded-lg hover:bg-slate-50 flex items-center gap-1.5 whitespace-nowrap"
+            title="מרכז מפה למיקום ברירת המחדל"
           >
-            כל השכבות ({activeDonors.length + activeEntities.length})
+            <Compass className="w-3.5 h-3.5 text-slate-600" />
+            <span>חזור למיקום ברירת המחדל</span>
           </button>
-          <button
-            type="button"
-            onClick={() => setLayerFilter('donors')}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
-              layerFilter === 'donors' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            בניינים ודיירים ({activeDonors.length})
-          </button>
-          <button
-            type="button"
-            onClick={() => setLayerFilter('community')}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
-              layerFilter === 'community' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            מתנדבים והערות רחוב ({activeEntities.length})
-          </button>
+
+          {canWrite && (
+            <button
+              type="button"
+              onClick={() => setShowDefaultLocEditor(!showDefaultLocEditor)}
+              className="px-3 py-1.5 text-xs font-semibold bg-slate-900 text-white rounded-lg hover:bg-slate-800 flex items-center gap-1.5 whitespace-nowrap"
+            >
+              <Settings className="w-3.5 h-3.5" />
+              <span>עריכת מיקום ברירת מחדל של המפה</span>
+            </button>
+          )}
+
+          <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg">
+            <button
+              type="button"
+              onClick={() => setLayerFilter('all')}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
+                layerFilter === 'all' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              כל השכבות ({activeDonors.length + activeEntities.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setLayerFilter('donors')}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
+                layerFilter === 'donors' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              בניינים ודיירים ({activeDonors.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setLayerFilter('community')}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
+                layerFilter === 'community' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              מתנדבים והערות רחוב ({activeEntities.length})
+            </button>
+          </div>
         </div>
       </div>
+
+      {defSaveToast && (
+        <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-semibold text-emerald-900 flex items-center justify-between">
+          <span className="flex items-center gap-2">
+            <Check className="w-4 h-4 text-emerald-600" />
+            {defSaveToast}
+          </span>
+          <button type="button" onClick={() => setDefSaveToast(null)} className="underline">
+            סגור
+          </button>
+        </div>
+      )}
+
+      {/* חלונית עריכת מיקום ברירת המחדל של המפה */}
+      {showDefaultLocEditor && canWrite && (
+        <form
+          onSubmit={handleSaveDefaultLocation}
+          className="bg-white border border-slate-200 rounded-xl p-5 space-y-4"
+        >
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900">
+                הגדרת מיקום ברירת המחדל של המפה (מרכז בית חב״ד ואזור הפעילות)
+              </h3>
+              <p className="text-xs text-slate-500">
+                מיקום זה קובע היכן המפה נפתחת כברירת מחדל וכן את זמני השקיעה ההלכתיים בלוח העברי.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowDefaultLocEditor(false)}
+              className="text-xs text-slate-500 hover:text-slate-900"
+            >
+              סגור ✕
+            </button>
+          </div>
+
+          <div className="flex flex-wrap items-end gap-3 bg-slate-50 p-3 rounded-lg border border-slate-200">
+            <div className="flex-1 min-w-[220px]">
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                חיפוש מהיר של עיר / שכונה / רחוב לאיתור קואורדינטות אוטומטי:
+              </label>
+              <input
+                type="text"
+                value={defSearchQuery}
+                onChange={(e) => setDefSearchQuery(e.target.value)}
+                placeholder="למשל: רחוב יד לבנים חיפה / כפר חב״ד / ירושלים..."
+                className="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg bg-white"
+              />
+            </div>
+            <button
+              type="button"
+              disabled={isSearchingDefLoc}
+              onClick={handleSearchDefaultLocationByAddress}
+              className="px-4 py-1.5 bg-slate-800 text-white text-xs font-semibold rounded-lg hover:bg-slate-700 flex items-center gap-1.5"
+            >
+              <Search className="w-3.5 h-3.5" />
+              <span>{isSearchingDefLoc ? 'מאתר כתובת...' : 'אתר כתובת והזן קואורדינטות'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setDefLatDraft(String(selectedLat));
+                setDefLngDraft(String(selectedLng));
+                setDefNameDraft(selectedBuildingAddress);
+              }}
+              className="px-3 py-1.5 bg-white border border-slate-300 text-slate-800 text-xs font-semibold rounded-lg hover:bg-slate-100"
+            >
+              העתק מהנקודה המסומנת כעת במפה
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                שם מיקום ברירת המחדל *
+              </label>
+              <input
+                type="text"
+                required
+                value={defNameDraft}
+                onChange={(e) => setDefNameDraft(e.target.value)}
+                className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                קו רוחב (Latitude) *
+              </label>
+              <input
+                type="number"
+                step="0.00001"
+                required
+                value={defLatDraft}
+                onChange={(e) => setDefLatDraft(e.target.value)}
+                className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg font-mono tabular-nums"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                קו אורך (Longitude) *
+              </label>
+              <input
+                type="number"
+                step="0.00001"
+                required
+                value={defLngDraft}
+                onChange={(e) => setDefLngDraft(e.target.value)}
+                className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg font-mono tabular-nums"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                רמת תקריב התחלתית (Zoom 8-19)
+              </label>
+              <input
+                type="number"
+                min="8"
+                max="19"
+                value={defZoomDraft}
+                onChange={(e) => setDefZoomDraft(e.target.value)}
+                className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg font-mono tabular-nums"
+              />
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setShowDefaultLocEditor(false)}
+              className="px-4 py-1.5 text-xs text-slate-600"
+            >
+              ביטול
+            </button>
+            <button
+              type="submit"
+              className="px-5 py-1.5 bg-slate-900 text-white text-xs font-semibold rounded-lg hover:bg-slate-800"
+            >
+              שמור כמיקום ברירת המחדל של המפה
+            </button>
+          </div>
+        </form>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Map Viewport */}
         <div className="lg:col-span-2 bg-white border border-slate-200 rounded-xl overflow-hidden h-[580px] relative">
           <MapContainer
             center={[centerLat, centerLng]}
-            zoom={16}
+            zoom={mapZoom}
             style={{ height: '100%', width: '100%' }}
           >
             <TileLayer
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
+            <MapViewSyncer lat={centerLat} lng={centerLng} zoom={mapZoom} />
             <MapClickCapture
               onPickCoords={(lat, lng) => {
                 handleSelectBuildingLocation(lat, lng);
@@ -328,12 +590,21 @@ export const GisMapView: React.FC<GisMapViewProps> = ({
             {/* סיכת הבניין הנבחר כעת */}
             <Marker position={[selectedLat, selectedLng]} icon={selectedBuildingIcon}>
               <Popup>
-                <div className="text-right font-sans p-1 space-y-1">
+                <div className="text-right font-sans p-1 space-y-1.5 min-w-[180px]">
                   <div className="font-bold text-blue-900 text-xs">הבניין שנבחר כעת:</div>
                   <div className="font-bold text-slate-900 text-sm">{selectedBuildingAddress}</div>
                   <div className="text-xs text-slate-600">
                     {buildingResidents.length} משפחות / דיירים רשומים בבניין זה
                   </div>
+                  {canWrite && (
+                    <button
+                      type="button"
+                      onClick={handleSetPickedPointAsDefault}
+                      className="mt-1 w-full px-2 py-1 bg-slate-900 text-white text-[11px] rounded hover:bg-slate-800"
+                    >
+                      קבע נקודה זו כברירת מחדל למפה
+                    </button>
+                  )}
                 </div>
               </Popup>
             </Marker>
@@ -418,8 +689,17 @@ export const GisMapView: React.FC<GisMapViewProps> = ({
                 <h3 className="text-base font-bold text-slate-900 mt-1">
                   {selectedBuildingAddress}
                 </h3>
-                <div className="text-[11px] text-slate-500 font-mono tabular-nums mt-0.5">
-                  קואורדינטות: {selectedLat}, {selectedLng}
+                <div className="text-[11px] text-slate-500 font-mono tabular-nums mt-0.5 flex items-center gap-2">
+                  <span>קואורדינטות: {selectedLat}, {selectedLng}</span>
+                  {canWrite && (
+                    <button
+                      type="button"
+                      onClick={handleSetPickedPointAsDefault}
+                      className="text-blue-700 hover:underline font-sans"
+                    >
+                      קבע כברירת מחדל
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -662,7 +942,7 @@ export const GisMapView: React.FC<GisMapViewProps> = ({
                           type="button"
                           onClick={() => {
                             setCenterLat(d.lat!);
-                            setCenterLng(d.lng!);
+                            setCenterLng(d.lat ? d.lng! : defaultMapLocation.lng);
                             handleSelectBuildingLocation(d.lat!, d.lng!, d.address);
                           }}
                           className="px-2.5 py-1 text-xs font-medium bg-slate-100 text-slate-800 rounded hover:bg-slate-200 flex items-center gap-1"

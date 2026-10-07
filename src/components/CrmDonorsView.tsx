@@ -69,6 +69,7 @@ export const CrmDonorsView: React.FC<CrmDonorsViewProps> = ({
   onSaveCommunityEntity,
 }) => {
   const [subTab, setSubTab] = useState<'donors' | 'volunteers_classes'>('donors');
+  const [donorDisplayMode, setDonorDisplayMode] = useState<'split' | 'table'>('table');
   const [searchQuery, setSearchQuery] = useState('');
   const [filterNextActionOnly, setFilterNextActionOnly] = useState(false);
   const [revealedIds, setRevealedIds] = useState<Record<string, string>>({});
@@ -836,28 +837,170 @@ export const CrmDonorsView: React.FC<CrmDonorsViewProps> = ({
             </form>
           )}
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Donors List */}
-            <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="חיפוש לפי שם, סימן זיהוי, כתובת..."
-                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg"
-                />
-              </div>
-              <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+          {/* סרגל חיפוש ותצוגת טבלה רחבה / תצוגת כרטיס מפורט */}
+          <div className="bg-white border border-slate-300/80 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex-1 min-w-[240px]">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="חיפוש מהיר לפי שם, סימן זיהוי, קשר פרטי, כתובת או טלפון..."
+                className="w-full px-3.5 py-2 text-xs border border-slate-300 rounded-lg"
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer font-medium">
                 <input
                   type="checkbox"
                   checked={filterNextActionOnly}
                   onChange={(e) => setFilterNextActionOnly(e.target.checked)}
                 />
-                <span>הצג רק תורמים עם &quot;הפעולה הבאה&quot; פתוחה</span>
+                <span>רק עם &quot;הפעולה הבאה&quot; פתוחה</span>
               </label>
 
-              <div className="divide-y divide-slate-100 max-h-[540px] overflow-y-auto">
+              <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg">
+                <button
+                  type="button"
+                  onClick={() => setDonorDisplayMode('table')}
+                  className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${
+                    donorDisplayMode === 'table'
+                      ? 'bg-slate-900 text-white'
+                      : 'text-slate-700 hover:text-slate-900'
+                  }`}
+                >
+                  טבלה רחבה מלאה
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDonorDisplayMode('split')}
+                  className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${
+                    donorDisplayMode === 'split'
+                      ? 'bg-slate-900 text-white'
+                      : 'text-slate-700 hover:text-slate-900'
+                  }`}
+                >
+                  כרטיס תורם ופירוט
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {donorDisplayMode === 'table' && (
+            <div className="bg-white border border-slate-300/90 rounded-xl overflow-hidden shadow-xs">
+              <div className="overflow-x-auto max-h-[620px]">
+                <table className="erp-table text-right">
+                  <thead>
+                    <tr className="text-xs font-semibold text-slate-700">
+                      <th className="py-3.5 px-4 col-compact">שם מלא וטלפון</th>
+                      <th className="py-3.5 px-5 col-text-wide">סימן זיהוי וקשר פרטי מפורט לבית חב״ד</th>
+                      <th className="py-3.5 px-5 col-text-medium">כתובת מגורים והפעולה הבאה למעקב</th>
+                      <th className="py-3.5 px-4 col-compact">ת.ז. מוצפנת</th>
+                      <th className="py-3.5 px-4 text-left col-compact">פעולות</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200/80 text-sm">
+                    {activeDonors.map((d) => (
+                      <tr
+                        key={d.id}
+                        onClick={() => {
+                          onSelectDonorId(d.id);
+                        }}
+                        className={`cursor-pointer ${
+                          selectedDonor?.id === d.id ? 'ring-1 ring-inset ring-slate-400' : ''
+                        }`}
+                      >
+                        <td className="py-3.5 px-4 whitespace-nowrap align-top">
+                          <div className="font-bold text-slate-900 text-base">{d.fullName}</div>
+                          <div className="text-xs font-mono text-slate-600 mt-0.5">{d.phone}</div>
+                        </td>
+                        <td className="py-3.5 px-5 col-text-wide align-top">
+                          <div className="font-semibold text-slate-900 leading-snug">
+                            {d.identifierMark}
+                          </div>
+                          <div className="text-xs text-slate-700 mt-1 leading-relaxed">
+                            <strong>קשר אישי:</strong> {d.personalConnection}
+                          </div>
+                        </td>
+                        <td className="py-3.5 px-5 col-text-medium align-top text-xs">
+                          <div className="text-slate-800 font-medium leading-snug">{d.address}</div>
+                          {d.nextActionText ? (
+                            <div className="text-amber-900 font-semibold mt-1 leading-relaxed">
+                              הפעולה הבאה: {d.nextActionText}
+                              {d.nextActionDate ? ` (${d.nextActionDate})` : ''}
+                            </div>
+                          ) : (
+                            <div className="text-slate-500 mt-1">ללא פעולה פתוחה</div>
+                          )}
+                        </td>
+                        <td className="py-3.5 px-4 whitespace-nowrap align-top font-mono tabular-nums text-xs">
+                          <div className="inline-flex items-center gap-1.5">
+                            <span>
+                              {formatMaskedNationalId(d.nationalIdLast4, revealedIds[d.id])}
+                            </span>
+                            {canRevealNationalId && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleToggleRevealId(d);
+                                }}
+                                className="text-slate-600 hover:text-slate-900"
+                                title="חשוף ת.ז."
+                              >
+                                {revealedIds[d.id] ? (
+                                  <EyeOff className="w-3.5 h-3.5" />
+                                ) : (
+                                  <Eye className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-3.5 px-4 text-left whitespace-nowrap align-top">
+                          <div className="inline-flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onSelectDonorId(d.id);
+                                setDonorDisplayMode('split');
+                              }}
+                              className="px-2.5 py-1 text-xs font-semibold border border-slate-300 rounded hover:bg-slate-200/70 text-slate-800"
+                            >
+                              כרטיס מלא
+                            </button>
+                            {canWriteCrm && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onSoftDeleteDonor(d.id);
+                                }}
+                                className="p-1.5 text-red-700 hover:bg-red-100/60 rounded"
+                                title="מחיקה רכה"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Donors List */}
+            <div className="bg-white border border-slate-300/80 rounded-xl p-4 space-y-3">
+              <div className="text-xs font-bold text-slate-800 border-b border-slate-200 pb-2">
+                רשימת תורמים ואנשי קשר ({activeDonors.length})
+              </div>
+
+              <div className="divide-y divide-slate-200/70 max-h-[540px] overflow-y-auto">
                 {activeDonors.map((d) => {
                   const isSelected = selectedDonor?.id === d.id;
                   return (
@@ -1016,14 +1159,14 @@ export const CrmDonorsView: React.FC<CrmDonorsViewProps> = ({
                       <FileText className="w-4 h-4 text-slate-700" />
                       היסטוריית תרומות והתחייבויות (מתעדכנת אוטומטית מהמודול הפיננסי)
                     </h4>
-                    <div className="border border-slate-200 rounded-lg overflow-hidden">
-                      <table className="w-full text-right text-xs">
-                        <thead className="bg-slate-50 border-b border-slate-200 text-slate-600">
+                    <div className="border border-slate-300/80 rounded-lg overflow-hidden">
+                      <table className="erp-table text-right text-xs">
+                        <thead>
                           <tr>
-                            <th className="py-2 px-3">תאריך</th>
-                            <th className="py-2 px-3">תיאור וקופה</th>
-                            <th className="py-2 px-3">קבלה</th>
-                            <th className="py-2 px-3">סכום ברוטו</th>
+                            <th className="py-2.5 px-3 col-compact">תאריך</th>
+                            <th className="py-2.5 px-4 col-text-wide">תיאור מפורט וקופה</th>
+                            <th className="py-2.5 px-3 col-compact">קבלה</th>
+                            <th className="py-2.5 px-3 col-compact">סכום ברוטו</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">

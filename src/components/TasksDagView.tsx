@@ -356,7 +356,7 @@ export const TasksDagView: React.FC<TasksDagViewProps> = ({
       <React.Fragment key={task.id}>
         <tr className={`hover:bg-slate-50/90 transition-colors ${depth > 0 ? 'bg-slate-50/40' : ''}`}>
           {/* 1. סימון ביצוע */}
-          <td className="py-3 px-4 align-top">
+          <td className="py-3.5 px-4 align-top col-compact">
             <button
               type="button"
               disabled={!canWrite}
@@ -365,26 +365,26 @@ export const TasksDagView: React.FC<TasksDagViewProps> = ({
               title={task.isCompleted ? 'סמן כלא בוצע' : 'סמן משימה כבוצעה'}
             >
               {task.isCompleted ? (
-                <CheckSquare className="w-5 h-5 text-emerald-600" />
+                <CheckSquare className="w-5 h-5 text-emerald-700" />
               ) : (
-                <Square className="w-5 h-5 text-slate-400" />
+                <Square className="w-5 h-5 text-slate-500" />
               )}
             </button>
           </td>
 
-          {/* 2. עץ משימות ותתי-משימות עם כפתור + להוספת תת-משימה */}
-          <td className="py-3 px-4 align-top">
+          {/* 2. עץ משימות ותתי-משימות עם כפתור + להוספת תת-משימה (תא רחב קבוע לטקסט מפורט) */}
+          <td className="py-3.5 px-5 align-top col-text-wide">
             <div
               style={{ marginRight: `${depth * 22}px` }}
-              className={`${depth > 0 ? 'pr-3 border-r-2 border-slate-300' : ''}`}
+              className={`${depth > 0 ? 'pr-3 border-r-2 border-slate-400/70' : ''}`}
             >
               <div className="flex flex-wrap items-center gap-2">
-                {depth > 0 && <span className="text-slate-400 font-bold">↳</span>}
+                {depth > 0 && <span className="text-slate-500 font-bold">↳</span>}
                 {task.isProject && (
-                  <FolderKanban className="w-4 h-4 text-amber-600 shrink-0" />
+                  <FolderKanban className="w-4 h-4 text-amber-700 shrink-0" />
                 )}
                 <span
-                  className={`font-bold text-slate-900 ${
+                  className={`font-bold text-slate-900 text-base leading-snug ${
                     task.isCompleted ? 'line-through text-slate-400' : ''
                   }`}
                 >
@@ -405,23 +405,23 @@ export const TasksDagView: React.FC<TasksDagViewProps> = ({
               </div>
 
               {task.assignee && (
-                <div className="text-xs text-slate-500 mt-0.5">אחראי: {task.assignee}</div>
+                <div className="text-xs text-slate-600 font-medium mt-1">אחראי ביצוע: {task.assignee}</div>
               )}
               {task.strategicGoal && (
-                <div className="text-xs text-slate-600 mt-0.5">
-                  <strong>מטרה:</strong> {task.strategicGoal}
+                <div className="text-xs text-slate-700 mt-1 leading-relaxed">
+                  <strong>מטרה ומהות:</strong> {task.strategicGoal}
                 </div>
               )}
               {task.successCriteria && (
-                <div className="text-xs text-slate-500">
+                <div className="text-xs text-slate-600 mt-0.5 leading-relaxed">
                   <strong>מבחן הצלחה:</strong> {task.successCriteria}
                 </div>
               )}
             </div>
           </td>
 
-          {/* 3. תאריך ביצוע למשימה הספציפית (לוח שנה עברי נפתח) + תזכורות (במייל / שולחן העבודה / דשבורד / פלאפון) בתאריך ולפניו */}
-          <td className="py-3 px-4 align-top text-xs">
+          {/* 3. תאריך ביצוע למשימה הספציפית (לוח שנה עברי נפתח) + תזכורות */}
+          <td className="py-3.5 px-4 align-top text-xs min-w-[310px]">
             <div className="space-y-2 bg-slate-50 border border-slate-200 rounded-lg p-2.5 min-w-[280px]">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <label className="font-bold text-slate-800 flex items-center gap-1">
@@ -1050,21 +1050,21 @@ export const TasksDagView: React.FC<TasksDagViewProps> = ({
       )}
 
       {/* עץ תתי-משימות היררכי עם + להוספה ותאריך ביצוע ותזכורות לצד כל משימה */}
-      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-right border-collapse">
+      <div className="bg-white border border-slate-300/90 rounded-xl overflow-hidden shadow-xs">
+        <div className="overflow-x-auto max-h-[720px]">
+          <table className="erp-table text-right">
             <thead>
-              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold text-slate-600">
-                <th className="py-3 px-4">ביצוע</th>
-                <th className="py-3 px-4">עץ משימות ותתי-משימות (+ להוספה)</th>
-                <th className="py-3 px-4">תאריך ביצוע למשימה ותזכורות (מייל/מחשב/דשבורד/נייד)</th>
-                <th className="py-3 px-4">משך (ימים)</th>
-                <th className="py-3 px-4">תלויות (DAG)</th>
-                <th className="py-3 px-4">המלצת התחלה ו-CPM</th>
-                <th className="py-3 px-4 text-left">פעולות</th>
+              <tr className="text-xs font-semibold text-slate-700">
+                <th className="py-3.5 px-4 col-compact">ביצוע</th>
+                <th className="py-3.5 px-5 col-text-wide">עץ משימות ותתי-משימות (+ להוספה, מטרה ומבחן הצלחה)</th>
+                <th className="py-3.5 px-4 min-w-[310px]">תאריך ביצוע למשימה ותזכורות (מייל/מחשב/דשבורד/נייד)</th>
+                <th className="py-3.5 px-4 col-compact">משך (ימים)</th>
+                <th className="py-3.5 px-4 col-text-medium">תלויות קודמות (DAG)</th>
+                <th className="py-3.5 px-4 col-compact">המלצת התחלה ו-CPM</th>
+                <th className="py-3.5 px-4 text-left col-compact">פעולות</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-200 text-sm">
+            <tbody className="divide-y divide-slate-200/80 text-sm">
               {rootTasks.map((rootTask) => renderTaskTreeRows(rootTask, 0))}
             </tbody>
           </table>
