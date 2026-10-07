@@ -1,0 +1,316 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Hardened Primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 64 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isBootstrappedAdmin() {
+      return isSignedIn() && request.auth.token.email == 'chabadneveyosef@gmail.com';
+    }
+
+    function isActiveMember() {
+      return isBootstrappedAdmin() || (
+        isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isBlocked == false
+      );
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin() || (
+        isActiveMember() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.roleTemplate == 'admin'
+      );
+    }
+
+    // 3. Entity Validation Blueprints
+    function isValidUser(data) {
+      return data.keys().hasAll(['id', 'uid', 'email', 'displayName', 'roleTemplate', 'isBlocked', 'sessionVersion', 'permissionsJson', 'sensitivePermissionsJson', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'uid', 'email', 'displayName', 'username', 'passwordHash', 'roleTemplate', 'isBlocked', 'sessionVersion', 'permissionsJson', 'sensitivePermissionsJson', 'createdAt', 'updatedAt', 'deletedAt']) &&
+        data.id is string && data.id.size() <= 64 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.uid is string && data.uid.size() <= 128 &&
+        data.email is string && data.email.size() <= 150 &&
+        data.displayName is string && data.displayName.size() <= 100 &&
+        (!('username' in data) || (data.username is string && data.username.size() <= 60)) &&
+        (!('passwordHash' in data) || (data.passwordHash is string && data.passwordHash.size() <= 256)) &&
+        data.roleTemplate in ['admin', 'treasurer', 'coordinator', 'volunteer'] &&
+        data.isBlocked is bool &&
+        data.sessionVersion is number &&
+        data.permissionsJson is string && data.permissionsJson.size() <= 2000 &&
+        data.sensitivePermissionsJson is string && data.sensitivePermissionsJson.size() <= 1000 &&
+        data.createdAt is string && data.createdAt.size() <= 40 &&
+        data.updatedAt is string && data.updatedAt.size() <= 40 &&
+        (!('deletedAt' in data) || (data.deletedAt is string && data.deletedAt.size() <= 40));
+    }
+
+    function isValidAuditLog(data) {
+      return data.keys().hasAll(['id', 'actorUid', 'actorName', 'targetId', 'targetName', 'actionType', 'details', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'actorUid', 'actorName', 'targetId', 'targetName', 'actionType', 'details', 'createdAt', 'updatedAt', 'deletedAt']) &&
+        data.id is string && data.id.size() <= 64 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.actorUid is string && data.actorUid.size() <= 128 &&
+        data.actorName is string && data.actorName.size() <= 100 &&
+        data.targetId is string && data.targetId.size() <= 128 &&
+        data.targetName is string && data.targetName.size() <= 150 &&
+        data.actionType is string && data.actionType.size() <= 80 &&
+        data.details is string && data.details.size() <= 1000 &&
+        data.createdAt is string && data.createdAt.size() <= 40 &&
+        data.updatedAt is string && data.updatedAt.size() <= 40 &&
+        (!('deletedAt' in data) || (data.deletedAt is string && data.deletedAt.size() <= 40));
+    }
+
+    function isValidAnnualActivity(data) {
+      return data.keys().hasAll(['id', 'title', 'category', 'hebrewDay', 'hebrewMonth', 'hebrewYear', 'hebrewDateDisplay', 'gregorianDate', 'isExecuted', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'title', 'category', 'hebrewDay', 'hebrewMonth', 'hebrewYear', 'hebrewDateDisplay', 'gregorianDate', 'sunsetTime', 'locationName', 'responsiblePerson', 'estimatedBudgetAgorot', 'isExecuted', 'templateId', 'customFieldsJson', 'notes', 'createdAt', 'updatedAt', 'deletedAt']) &&
+        data.id is string && data.id.size() <= 64 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.title is string && data.title.size() <= 150 &&
+        data.category is string && data.category.size() <= 80 &&
+        data.hebrewDay is number && data.hebrewDay >= 1 && data.hebrewDay <= 30 &&
+        data.hebrewMonth is number && data.hebrewMonth >= 1 && data.hebrewMonth <= 14 &&
+        data.hebrewYear is number && data.hebrewYear >= 5700 && data.hebrewYear <= 6000 &&
+        data.hebrewDateDisplay is string && data.hebrewDateDisplay.size() <= 80 &&
+        data.gregorianDate is string && data.gregorianDate.size() <= 40 &&
+        (!('sunsetTime' in data) || (data.sunsetTime is string && data.sunsetTime.size() <= 20)) &&
+        (!('locationName' in data) || (data.locationName is string && data.locationName.size() <= 120)) &&
+        (!('responsiblePerson' in data) || (data.responsiblePerson is string && data.responsiblePerson.size() <= 100)) &&
+        (!('estimatedBudgetAgorot' in data) || data.estimatedBudgetAgorot is number) &&
+        data.isExecuted is bool &&
+        (!('templateId' in data) || (data.templateId is string && data.templateId.size() <= 64)) &&
+        (!('customFieldsJson' in data) || (data.customFieldsJson is string && data.customFieldsJson.size() <= 3000)) &&
+        (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000)) &&
+        data.createdAt is string && data.createdAt.size() <= 40 &&
+        data.updatedAt is string && data.updatedAt.size() <= 40 &&
+        (!('deletedAt' in data) || (data.deletedAt is string && data.deletedAt.size() <= 40));
+    }
+
+    function isValidTaskNode(data) {
+      return data.keys().hasAll(['id', 'title', 'isProject', 'durationDays', 'isCompleted', 'dependsOnIdsJson', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'title', 'parentId', 'targetDate', 'hebrewDateStr', 'isProject', 'strategicGoal', 'successCriteria', 'durationDays', 'isCompleted', 'assignee', 'dependsOnIdsJson', 'reminderDate', 'reminderEmail', 'createdAt', 'updatedAt', 'deletedAt']) &&
+        data.id is string && data.id.size() <= 64 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.title is string && data.title.size() <= 150 &&
+        (!('parentId' in data) || (data.parentId is string && data.parentId.size() <= 64)) &&
+        (!('targetDate' in data) || (data.targetDate is string && data.targetDate.size() <= 40)) &&
+        (!('hebrewDateStr' in data) || (data.hebrewDateStr is string && data.hebrewDateStr.size() <= 80)) &&
+        data.isProject is bool &&
+        (!('strategicGoal' in data) || (data.strategicGoal is string && data.strategicGoal.size() <= 500)) &&
+        (!('successCriteria' in data) || (data.successCriteria is string && data.successCriteria.size() <= 500)) &&
+        data.durationDays is number && data.durationDays >= 0 && data.durationDays <= 3650 &&
+        data.isCompleted is bool &&
+        (!('assignee' in data) || (data.assignee is string && data.assignee.size() <= 100)) &&
+        data.dependsOnIdsJson is string && data.dependsOnIdsJson.size() <= 1000 &&
+        (!('reminderDate' in data) || (data.reminderDate is string && data.reminderDate.size() <= 40)) &&
+        (!('reminderEmail' in data) || (data.reminderEmail is string && data.reminderEmail.size() <= 150)) &&
+        data.createdAt is string && data.createdAt.size() <= 40 &&
+        data.updatedAt is string && data.updatedAt.size() <= 40 &&
+        (!('deletedAt' in data) || (data.deletedAt is string && data.deletedAt.size() <= 40));
+    }
+
+    function isValidDynamicTemplate(data) {
+      return data.keys().hasAll(['id', 'name', 'category', 'schemaJson', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'name', 'category', 'schemaJson', 'defaultTasksJson', 'createdAt', 'updatedAt', 'deletedAt']) &&
+        data.id is string && data.id.size() <= 64 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.name is string && data.name.size() <= 100 &&
+        data.category is string && data.category.size() <= 80 &&
+        data.schemaJson is string && data.schemaJson.size() <= 4000 &&
+        (!('defaultTasksJson' in data) || (data.defaultTasksJson is string && data.defaultTasksJson.size() <= 4000)) &&
+        data.createdAt is string && data.createdAt.size() <= 40 &&
+        data.updatedAt is string && data.updatedAt.size() <= 40 &&
+        (!('deletedAt' in data) || (data.deletedAt is string && data.deletedAt.size() <= 40));
+    }
+
+    function isValidFinancialTransaction(data) {
+      return data.keys().hasAll(['id', 'type', 'fundSource', 'grossAmountAgorot', 'feePercent', 'feeAmountAgorot', 'netAmountAgorot', 'status', 'category', 'description', 'date', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'type', 'fundSource', 'grossAmountAgorot', 'feePercent', 'feeAmountAgorot', 'netAmountAgorot', 'status', 'category', 'description', 'donorId', 'donorName', 'receiptNumber', 'date', 'hebrewDateDisplay', 'createdAt', 'updatedAt', 'deletedAt']) &&
+        data.id is string && data.id.size() <= 64 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.type in ['income', 'expense', 'pledge'] &&
+        data.fundSource in ['regular', 'second_association'] &&
+        data.grossAmountAgorot is number && data.grossAmountAgorot >= 0 &&
+        data.feePercent is number && data.feePercent >= 0 && data.feePercent <= 100 &&
+        data.feeAmountAgorot is number && data.feeAmountAgorot >= 0 &&
+        data.netAmountAgorot is number && data.netAmountAgorot >= 0 &&
+        data.status in ['executed', 'pending', 'estimated'] &&
+        data.category is string && data.category.size() <= 80 &&
+        data.description is string && data.description.size() <= 300 &&
+        (!('donorId' in data) || (data.donorId is string && data.donorId.size() <= 64)) &&
+        (!('donorName' in data) || (data.donorName is string && data.donorName.size() <= 120)) &&
+        (!('receiptNumber' in data) || (data.receiptNumber is string && data.receiptNumber.size() <= 60)) &&
+        data.date is string && data.date.size() <= 40 &&
+        (!('hebrewDateDisplay' in data) || (data.hebrewDateDisplay is string && data.hebrewDateDisplay.size() <= 80)) &&
+        data.createdAt is string && data.createdAt.size() <= 40 &&
+        data.updatedAt is string && data.updatedAt.size() <= 40 &&
+        (!('deletedAt' in data) || (data.deletedAt is string && data.deletedAt.size() <= 40));
+    }
+
+    function isValidDonorContact(data) {
+      return data.keys().hasAll(['id', 'fullName', 'identifierMark', 'personalConnection', 'encryptedNationalId', 'nationalIdLast4', 'phone', 'address', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'fullName', 'identifierMark', 'personalConnection', 'encryptedNationalId', 'nationalIdLast4', 'phone', 'email', 'address', 'city', 'lat', 'lng', 'significantDatesJson', 'interactionsJson', 'nextActionText', 'nextActionDate', 'attachmentsJson', 'createdAt', 'updatedAt', 'deletedAt']) &&
+        data.id is string && data.id.size() <= 64 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.fullName is string && data.fullName.size() <= 120 &&
+        data.identifierMark is string && data.identifierMark.size() <= 120 &&
+        data.personalConnection is string && data.personalConnection.size() <= 120 &&
+        data.encryptedNationalId is string && data.encryptedNationalId.size() <= 256 &&
+        data.nationalIdLast4 is string && data.nationalIdLast4.size() <= 4 &&
+        data.phone is string && data.phone.size() <= 40 &&
+        (!('email' in data) || (data.email is string && data.email.size() <= 120)) &&
+        data.address is string && data.address.size() <= 200 &&
+        (!('city' in data) || (data.city is string && data.city.size() <= 80)) &&
+        (!('lat' in data) || data.lat is number) &&
+        (!('lng' in data) || data.lng is number) &&
+        (!('significantDatesJson' in data) || (data.significantDatesJson is string && data.significantDatesJson.size() <= 2000)) &&
+        (!('interactionsJson' in data) || (data.interactionsJson is string && data.interactionsJson.size() <= 4000)) &&
+        (!('nextActionText' in data) || (data.nextActionText is string && data.nextActionText.size() <= 250)) &&
+        (!('nextActionDate' in data) || (data.nextActionDate is string && data.nextActionDate.size() <= 40)) &&
+        (!('attachmentsJson' in data) || (data.attachmentsJson is string && data.attachmentsJson.size() <= 2000)) &&
+        data.createdAt is string && data.createdAt.size() <= 40 &&
+        data.updatedAt is string && data.updatedAt.size() <= 40 &&
+        (!('deletedAt' in data) || (data.deletedAt is string && data.deletedAt.size() <= 40));
+    }
+
+    function isValidVolunteerEntity(data) {
+      return data.keys().hasAll(['id', 'entityType', 'titleOrName', 'isActive', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'entityType', 'titleOrName', 'phoneOrSchedule', 'areaOrAddress', 'lat', 'lng', 'notes', 'isActive', 'createdAt', 'updatedAt', 'deletedAt']) &&
+        data.id is string && data.id.size() <= 64 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.entityType in ['volunteer', 'regular_class', 'street_note'] &&
+        data.titleOrName is string && data.titleOrName.size() <= 120 &&
+        (!('phoneOrSchedule' in data) || (data.phoneOrSchedule is string && data.phoneOrSchedule.size() <= 120)) &&
+        (!('areaOrAddress' in data) || (data.areaOrAddress is string && data.areaOrAddress.size() <= 200)) &&
+        (!('lat' in data) || data.lat is number) &&
+        (!('lng' in data) || data.lng is number) &&
+        (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000)) &&
+        data.isActive is bool &&
+        data.createdAt is string && data.createdAt.size() <= 40 &&
+        data.updatedAt is string && data.updatedAt.size() <= 40 &&
+        (!('deletedAt' in data) || (data.deletedAt is string && data.deletedAt.size() <= 40));
+    }
+
+    // 4. Collection Match Blocks
+    match /test/connection {
+      allow get: if isSignedIn();
+    }
+
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && (request.auth.uid == userId || isAdmin());
+      allow list: if isSignedIn() && existing().id.size() >= 1 && (request.auth.uid == existing().uid || isAdmin());
+      allow create: if isSignedIn() && isValidId(userId) && isValidUser(incoming()) && (
+        isAdmin() || (
+          request.auth.uid == userId &&
+          incoming().uid == request.auth.uid &&
+          incoming().isBlocked == false &&
+          (incoming().roleTemplate == 'volunteer' || isBootstrappedAdmin())
+        )
+      );
+      allow update: if isSignedIn() && isValidId(userId) && isValidUser(incoming()) &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().id == existing().id && (
+          isAdmin() || (
+            request.auth.uid == userId &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'updatedAt'])
+          )
+        );
+      allow delete: if isAdmin() && isValidId(userId) && request.auth.uid != userId;
+    }
+
+    match /audit_logs/{logId} {
+      allow get: if isActiveMember() && isValidId(logId);
+      allow list: if isActiveMember() && existing().id.size() >= 1;
+      allow create: if isActiveMember() && isValidId(logId) && isValidAuditLog(incoming()) && incoming().actorUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    match /annual_activities/{activityId} {
+      allow get: if isActiveMember() && isValidId(activityId);
+      allow list: if isActiveMember() && existing().id.size() >= 1;
+      allow create: if isActiveMember() && isValidId(activityId) && isValidAnnualActivity(incoming());
+      allow update: if isActiveMember() && isValidId(activityId) && isValidAnnualActivity(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt && (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['title', 'category', 'hebrewDay', 'hebrewMonth', 'hebrewYear', 'hebrewDateDisplay', 'gregorianDate', 'sunsetTime', 'locationName', 'responsiblePerson', 'estimatedBudgetAgorot', 'isExecuted', 'templateId', 'customFieldsJson', 'notes', 'updatedAt', 'deletedAt'])
+        );
+      allow delete: if isAdmin() && isValidId(activityId);
+    }
+
+    match /tasks/{taskId} {
+      allow get: if isActiveMember() && isValidId(taskId);
+      allow list: if isActiveMember() && existing().id.size() >= 1;
+      allow create: if isActiveMember() && isValidId(taskId) && isValidTaskNode(incoming());
+      allow update: if isActiveMember() && isValidId(taskId) && isValidTaskNode(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt && (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['title', 'parentId', 'targetDate', 'hebrewDateStr', 'isProject', 'strategicGoal', 'successCriteria', 'durationDays', 'isCompleted', 'assignee', 'dependsOnIdsJson', 'reminderDate', 'reminderEmail', 'updatedAt', 'deletedAt'])
+        );
+      allow delete: if isAdmin() && isValidId(taskId);
+    }
+
+    match /templates/{templateId} {
+      allow get: if isActiveMember() && isValidId(templateId);
+      allow list: if isActiveMember() && existing().id.size() >= 1;
+      allow create: if isActiveMember() && isValidId(templateId) && isValidDynamicTemplate(incoming());
+      allow update: if isActiveMember() && isValidId(templateId) && isValidDynamicTemplate(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt && (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'category', 'schemaJson', 'defaultTasksJson', 'updatedAt', 'deletedAt'])
+        );
+      allow delete: if isAdmin() && isValidId(templateId);
+    }
+
+    match /transactions/{txId} {
+      allow get: if isActiveMember() && isValidId(txId);
+      allow list: if isActiveMember() && existing().id.size() >= 1;
+      allow create: if isActiveMember() && isValidId(txId) && isValidFinancialTransaction(incoming());
+      allow update: if isActiveMember() && isValidId(txId) && isValidFinancialTransaction(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt && (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['type', 'fundSource', 'grossAmountAgorot', 'feePercent', 'feeAmountAgorot', 'netAmountAgorot', 'status', 'category', 'description', 'donorId', 'donorName', 'receiptNumber', 'date', 'hebrewDateDisplay', 'updatedAt', 'deletedAt'])
+        );
+      allow delete: if isAdmin() && isValidId(txId);
+    }
+
+    match /donors/{donorId} {
+      allow get: if isActiveMember() && isValidId(donorId);
+      allow list: if isActiveMember() && existing().id.size() >= 1;
+      allow create: if isActiveMember() && isValidId(donorId) && isValidDonorContact(incoming());
+      allow update: if isActiveMember() && isValidId(donorId) && isValidDonorContact(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt && (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'identifierMark', 'personalConnection', 'encryptedNationalId', 'nationalIdLast4', 'phone', 'email', 'address', 'city', 'lat', 'lng', 'significantDatesJson', 'interactionsJson', 'nextActionText', 'nextActionDate', 'attachmentsJson', 'updatedAt', 'deletedAt'])
+        );
+      allow delete: if isAdmin() && isValidId(donorId);
+    }
+
+    match /community_entities/{entityId} {
+      allow get: if isActiveMember() && isValidId(entityId);
+      allow list: if isActiveMember() && existing().id.size() >= 1;
+      allow create: if isActiveMember() && isValidId(entityId) && isValidVolunteerEntity(incoming());
+      allow update: if isActiveMember() && isValidId(entityId) && isValidVolunteerEntity(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt && (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['entityType', 'titleOrName', 'phoneOrSchedule', 'areaOrAddress', 'lat', 'lng', 'notes', 'isActive', 'updatedAt', 'deletedAt'])
+        );
+      allow delete: if isAdmin() && isValidId(entityId);
+    }
+  }
+}

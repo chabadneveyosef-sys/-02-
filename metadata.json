@@ -1,0 +1,6 @@
+{
+  "name": "Chabad ERP & Annual Planner",
+  "description": "מערכת ERP מקיפה לניהול בית חב״ד: תוכנית שנתית ולוח עברי, משימות ותלויות (DAG/CPM), ניהול כספים כפול (רגיל ועמותה שנייה), CRM תורמים ומתנדבים, מפת GIS וגיבוי מוצפן.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

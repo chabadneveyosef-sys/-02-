@@ -1,0 +1,220 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "משתמש מערכת עם הרשאות תפקיד, סטטוס חסימה וניהול סשנים",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "uid": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 150 },
+        "displayName": { "type": "string", "maxLength": 100 },
+        "username": { "type": "string", "maxLength": 60 },
+        "passwordHash": { "type": "string", "maxLength": 256 },
+        "roleTemplate": { "type": "string", "enum": ["admin", "treasurer", "coordinator", "volunteer"] },
+        "isBlocked": { "type": "boolean" },
+        "sessionVersion": { "type": "number" },
+        "permissionsJson": { "type": "string", "maxLength": 2000 },
+        "sensitivePermissionsJson": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string", "maxLength": 40 },
+        "updatedAt": { "type": "string", "maxLength": 40 },
+        "deletedAt": { "type": "string", "maxLength": 40 }
+      },
+      "required": ["id", "uid", "email", "displayName", "roleTemplate", "isBlocked", "sessionVersion", "permissionsJson", "sensitivePermissionsJson", "createdAt", "updatedAt"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "יומן ביקורת ושינויים לכל פעולה רגישה, שינוי הרשאה או חסימה",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "actorUid": { "type": "string", "maxLength": 128 },
+        "actorName": { "type": "string", "maxLength": 100 },
+        "targetId": { "type": "string", "maxLength": 128 },
+        "targetName": { "type": "string", "maxLength": 150 },
+        "actionType": { "type": "string", "maxLength": 80 },
+        "details": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string", "maxLength": 40 },
+        "updatedAt": { "type": "string", "maxLength": 40 },
+        "deletedAt": { "type": "string", "maxLength": 40 }
+      },
+      "required": ["id", "actorUid", "actorName", "targetId", "targetName", "actionType", "details", "createdAt", "updatedAt"]
+    },
+    "AnnualActivity": {
+      "title": "AnnualActivity",
+      "description": "פעילות בתוכנית השנתית עם תאריך עברי שלשה ותאריך לועזי נגזר",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "maxLength": 150 },
+        "category": { "type": "string", "maxLength": 80 },
+        "hebrewDay": { "type": "number" },
+        "hebrewMonth": { "type": "number" },
+        "hebrewYear": { "type": "number" },
+        "hebrewDateDisplay": { "type": "string", "maxLength": 80 },
+        "gregorianDate": { "type": "string", "maxLength": 40 },
+        "sunsetTime": { "type": "string", "maxLength": 20 },
+        "locationName": { "type": "string", "maxLength": 120 },
+        "responsiblePerson": { "type": "string", "maxLength": 100 },
+        "estimatedBudgetAgorot": { "type": "number" },
+        "isExecuted": { "type": "boolean" },
+        "templateId": { "type": "string", "maxLength": 64 },
+        "customFieldsJson": { "type": "string", "maxLength": 3000 },
+        "notes": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string", "maxLength": 40 },
+        "updatedAt": { "type": "string", "maxLength": 40 },
+        "deletedAt": { "type": "string", "maxLength": 40 }
+      },
+      "required": ["id", "title", "category", "hebrewDay", "hebrewMonth", "hebrewYear", "hebrewDateDisplay", "gregorianDate", "isExecuted", "createdAt", "updatedAt"]
+    },
+    "TaskNode": {
+      "title": "TaskNode",
+      "description": "משימה או פרויקט (ללא תאריך מוגדר אוטומטית כפרויקט) עם ניהול תלויות DAG ומסלול קריטי",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "maxLength": 150 },
+        "parentId": { "type": "string", "maxLength": 64 },
+        "targetDate": { "type": "string", "maxLength": 40 },
+        "hebrewDateStr": { "type": "string", "maxLength": 80 },
+        "isProject": { "type": "boolean" },
+        "strategicGoal": { "type": "string", "maxLength": 500 },
+        "successCriteria": { "type": "string", "maxLength": 500 },
+        "durationDays": { "type": "number" },
+        "isCompleted": { "type": "boolean" },
+        "assignee": { "type": "string", "maxLength": 100 },
+        "dependsOnIdsJson": { "type": "string", "maxLength": 1000 },
+        "reminderDate": { "type": "string", "maxLength": 40 },
+        "reminderEmail": { "type": "string", "maxLength": 150 },
+        "createdAt": { "type": "string", "maxLength": 40 },
+        "updatedAt": { "type": "string", "maxLength": 40 },
+        "deletedAt": { "type": "string", "maxLength": 40 }
+      },
+      "required": ["id", "title", "isProject", "durationDays", "isCompleted", "dependsOnIdsJson", "createdAt", "updatedAt"]
+    },
+    "DynamicTemplate": {
+      "title": "DynamicTemplate",
+      "description": "תבנית דינמית מבוססת JSON Schema לסיווג פעולות ומשימות",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "maxLength": 100 },
+        "category": { "type": "string", "maxLength": 80 },
+        "schemaJson": { "type": "string", "maxLength": 4000 },
+        "defaultTasksJson": { "type": "string", "maxLength": 4000 },
+        "createdAt": { "type": "string", "maxLength": 40 },
+        "updatedAt": { "type": "string", "maxLength": 40 },
+        "deletedAt": { "type": "string", "maxLength": 40 }
+      },
+      "required": ["id", "name", "category", "schemaJson", "createdAt", "updatedAt"]
+    },
+    "FinancialTransaction": {
+      "title": "FinancialTransaction",
+      "description": "תנועה כספית באגורות (הכנסה או הוצאה, כספים רגילים או עמותה שנייה)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "type": { "type": "string", "enum": ["income", "expense", "pledge"] },
+        "fundSource": { "type": "string", "enum": ["regular", "second_association"] },
+        "grossAmountAgorot": { "type": "number" },
+        "feePercent": { "type": "number" },
+        "feeAmountAgorot": { "type": "number" },
+        "netAmountAgorot": { "type": "number" },
+        "status": { "type": "string", "enum": ["executed", "pending", "estimated"] },
+        "category": { "type": "string", "maxLength": 80 },
+        "description": { "type": "string", "maxLength": 300 },
+        "donorId": { "type": "string", "maxLength": 64 },
+        "donorName": { "type": "string", "maxLength": 120 },
+        "receiptNumber": { "type": "string", "maxLength": 60 },
+        "date": { "type": "string", "maxLength": 40 },
+        "hebrewDateDisplay": { "type": "string", "maxLength": 80 },
+        "createdAt": { "type": "string", "maxLength": 40 },
+        "updatedAt": { "type": "string", "maxLength": 40 },
+        "deletedAt": { "type": "string", "maxLength": 40 }
+      },
+      "required": ["id", "type", "fundSource", "grossAmountAgorot", "feePercent", "feeAmountAgorot", "netAmountAgorot", "status", "category", "description", "date", "createdAt", "updatedAt"]
+    },
+    "DonorContact": {
+      "title": "DonorContact",
+      "description": "איש קשר ותורם CRM עם תעודת זהות מוצפנת, תאריכים עבריים, מעקב קשר וקואורדינטות מפה",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "fullName": { "type": "string", "maxLength": 120 },
+        "identifierMark": { "type": "string", "maxLength": 120 },
+        "personalConnection": { "type": "string", "maxLength": 120 },
+        "encryptedNationalId": { "type": "string", "maxLength": 256 },
+        "nationalIdLast4": { "type": "string", "maxLength": 4 },
+        "phone": { "type": "string", "maxLength": 40 },
+        "email": { "type": "string", "maxLength": 120 },
+        "address": { "type": "string", "maxLength": 200 },
+        "city": { "type": "string", "maxLength": 80 },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "significantDatesJson": { "type": "string", "maxLength": 2000 },
+        "interactionsJson": { "type": "string", "maxLength": 4000 },
+        "nextActionText": { "type": "string", "maxLength": 250 },
+        "nextActionDate": { "type": "string", "maxLength": 40 },
+        "attachmentsJson": { "type": "string", "maxLength": 2000 },
+        "createdAt": { "type": "string", "maxLength": 40 },
+        "updatedAt": { "type": "string", "maxLength": 40 },
+        "deletedAt": { "type": "string", "maxLength": 40 }
+      },
+      "required": ["id", "fullName", "identifierMark", "personalConnection", "encryptedNationalId", "nationalIdLast4", "phone", "address", "createdAt", "updatedAt"]
+    },
+    "VolunteerEntity": {
+      "title": "VolunteerEntity",
+      "description": "מתנדב (ישות נפרדת ממשתמש מערכת) ושיעורים/אירועים קבועים",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "entityType": { "type": "string", "enum": ["volunteer", "regular_class", "street_note"] },
+        "titleOrName": { "type": "string", "maxLength": 120 },
+        "phoneOrSchedule": { "type": "string", "maxLength": 120 },
+        "areaOrAddress": { "type": "string", "maxLength": 200 },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "notes": { "type": "string", "maxLength": 1000 },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string", "maxLength": 40 },
+        "updatedAt": { "type": "string", "maxLength": 40 },
+        "deletedAt": { "type": "string", "maxLength": 40 }
+      },
+      "required": ["id", "entityType", "titleOrName", "isActive", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "משתמשי המערכת והרשאות RBAC"
+    },
+    "/audit_logs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "יומן ביקורת שינויים ופעולות רגישות"
+    },
+    "/annual_activities/{activityId}": {
+      "schema": { "$ref": "#/entities/AnnualActivity" },
+      "description": "פעילויות התוכנית השנתית ממוינות לפי תאריך עברי"
+    },
+    "/tasks/{taskId}": {
+      "schema": { "$ref": "#/entities/TaskNode" },
+      "description": "משימות, פרויקטים ותלויות DAG"
+    },
+    "/templates/{templateId}": {
+      "schema": { "$ref": "#/entities/DynamicTemplate" },
+      "description": "תבניות דינמיות לפעילויות ומשימות"
+    },
+    "/transactions/{txId}": {
+      "schema": { "$ref": "#/entities/FinancialTransaction" },
+      "description": "תנועות כספיות באגורות (רגיל ועמותה שנייה)"
+    },
+    "/donors/{donorId}": {
+      "schema": { "$ref": "#/entities/DonorContact" },
+      "description": "תורמים ואנשי קשר CRM"
+    },
+    "/community_entities/{entityId}": {
+      "schema": { "$ref": "#/entities/VolunteerEntity" },
+      "description": "מתנדבים, שיעורים קבועים והערות רחוב על המפה"
+    }
+  }
+}

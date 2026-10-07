@@ -1,0 +1,1217 @@
+import React, { useState, useRef } from 'react';
+import {
+  Plus,
+  Eye,
+  EyeOff,
+  Phone,
+  MapPin,
+  Calendar,
+  History,
+  FileText,
+  Trash2,
+  UserCheck,
+  Download,
+  Upload,
+  RefreshCw,
+  CheckCircle2,
+  AlertCircle,
+} from 'lucide-react';
+import * as XLSX from 'xlsx';
+import {
+  DonorContactRecord,
+  FinancialTransactionRecord,
+  VolunteerEntityRecord,
+  SignificantHebrewDateItem,
+  DonorInteractionItem,
+} from '../types/erp';
+import {
+  encryptSensitiveString,
+  decryptSensitiveString,
+  formatMaskedNationalId,
+  formatAgorotToIls,
+  getAnniversaryInHebrewYear,
+  fromGregorianDate,
+  HebrewDateTriplet,
+} from '../lib/erp-core';
+import { getAccessToken, googleSignIn } from '../lib/firebase';
+import { HebrewDatePicker } from './HebrewDatePicker';
+
+interface CrmDonorsViewProps {
+  donors: DonorContactRecord[];
+  transactions: FinancialTransactionRecord[];
+  communityEntities: VolunteerEntityRecord[];
+  canWriteCrm: boolean;
+  canRevealNationalId: boolean;
+  selectedDonorId: string | null;
+  onSelectDonorId: (id: string | null) => void;
+  onSaveDonor: (
+    data: Omit<DonorContactRecord, 'id' | 'createdAt' | 'updatedAt'>,
+    existingId?: string
+  ) => Promise<void>;
+  onSoftDeleteDonor: (id: string) => Promise<void>;
+  onLogRevealNationalId: (donor: DonorContactRecord) => Promise<void>;
+  onSaveCommunityEntity: (
+    data: Omit<VolunteerEntityRecord, 'id' | 'createdAt' | 'updatedAt'>
+  ) => Promise<void>;
+}
+
+export const CrmDonorsView: React.FC<CrmDonorsViewProps> = ({
+  donors,
+  transactions,
+  communityEntities,
+  canWriteCrm,
+  canRevealNationalId,
+  selectedDonorId,
+  onSelectDonorId,
+  onSaveDonor,
+  onSoftDeleteDonor,
+  onLogRevealNationalId,
+  onSaveCommunityEntity,
+}) => {
+  const [subTab, setSubTab] = useState<'donors' | 'volunteers_classes'>('donors');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterNextActionOnly, setFilterNextActionOnly] = useState(false);
+  const [revealedIds, setRevealedIds] = useState<Record<string, string>>({});
+  const [showDonorForm, setShowDonorForm] = useState(false);
+  const [showEntityForm, setShowEntityForm] = useState(false);
+
+  // Sync / Import / Export state
+  const [syncMessage, setSyncMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [isSyncingGoogle, setIsSyncingGoogle] = useState(false);
+  const [showGoogleExportConfirm, setShowGoogleExportConfirm] = useState(false);
+  const excelFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // New Donor form state
+  const [fullName, setFullName] = useState('');
+  const [identifierMark, setIdentifierMark] = useState('');
+  const [personalConnection, setPersonalConnection] = useState('');
+  const [nationalIdPlain, setNationalIdPlain] = useState('');
+  const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
+  const [address, setAddress] = useState('');
+  const [nextActionText, setNextActionText] = useState('');
+  const [nextActionDate, setNextActionDate] = useState('');
+  const [sigTitle, setSigTitle] = useState('יום הולדת');
+  const [sigTriplet, setSigTriplet] = useState<HebrewDateTriplet>({ day: 18, month: 6, year: 5740 });
+
+  // Interaction log state
+  const [interactionType, setInteractionType] = useState<'home_visit' | 'phone_call' | 'meeting'>('home_visit');
+  const [interactionSummary, setInteractionSummary] = useState('');
+
+  // Volunteer/Class form state
+  const [entityType, setEntityType] = useState<'volunteer' | 'regular_class'>('volunteer');
+  const [titleOrName, setTitleOrName] = useState('');
+  const [phoneOrSchedule, setPhoneOrSchedule] = useState('');
+  const [areaOrAddress, setAreaOrAddress] = useState('');
+  const [entityNotes, setEntityNotes] = useState('');
+
+  const allActiveDonors = donors.filter((d) => !d.deletedAt);
+
+  const activeDonors = allActiveDonors.filter((d) => {
+    if (filterNextActionOnly && !d.nextActionText) return false;
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      return (
+        d.fullName.toLowerCase().includes(q) ||
+        d.identifierMark.toLowerCase().includes(q) ||
+        d.personalConnection.toLowerCase().includes(q) ||
+        d.address.toLowerCase().includes(q) ||
+        d.phone.includes(q)
+      );
+    }
+    return true;
+  });
+
+  const selectedDonor =
+    activeDonors.find((d) => d.id === selectedDonorId) || activeDonors[0] || null;
+
+  const handleToggleRevealId = async (donor: DonorContactRecord) => {
+    if (!canRevealNationalId) return;
+    if (revealedIds[donor.id]) {
+      const copy = { ...revealedIds };
+      delete copy[donor.id];
+      setRevealedIds(copy);
+    } else {
+      const plain = decryptSensitiveString(donor.encryptedNationalId);
+      setRevealedIds({ ...revealedIds, [donor.id]: plain });
+      await onLogRevealNationalId(donor);
+    }
+  };
+
+  // --- ייצוא לאקסל (Excel .xlsx) ---
+  const handleExportExcel = () => {
+    const rows = allActiveDonors.map((d) => ({
+      'שם מלא': d.fullName,
+      'טלפון': d.phone,
+      'אימייל': d.email || '',
+      'כתובת': d.address,
+      'עיר': d.city || 'חיפה',
+      'סימן זיהוי': d.identifierMark,
+      'קשר פרטי': d.personalConnection,
+      '4 ספרות אחרונות ת.ז.': d.nationalIdLast4,
+      'הפעולה הבאה': d.nextActionText || '',
+      'תאריך הפעולה הבאה': d.nextActionDate || '',
+      'קו רוחב (Lat)': d.lat ?? '',
+      'קו אורך (Lng)': d.lng ?? '',
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'אנשי קשר ותורמים');
+    XLSX.writeFile(workbook, `chabad_contacts_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    setSyncMessage({
+      type: 'success',
+      text: `יוצאו בהצלחה ${rows.length} אנשי קשר לקובץ אקסל (.xlsx).`,
+    });
+  };
+
+  // --- ייבוא מאקסל (Excel .xlsx / .xls / .csv) ---
+  const handleImportExcelFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !canWriteCrm) return;
+    setSyncMessage(null);
+
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+      const firstSheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[firstSheetName];
+      const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet);
+
+      let importedCount = 0;
+      for (const row of rawRows) {
+        const name = String(
+          row['שם מלא'] || row['שם'] || row['Full Name'] || row['Name'] || ''
+        ).trim();
+        if (!name) continue;
+
+        const phoneVal = String(
+          row['טלפון'] || row['נייד'] || row['Phone'] || row['Mobile'] || ''
+        ).trim();
+        const emailVal = String(
+          row['אימייל'] || row['מייל'] || row['Email'] || ''
+        ).trim();
+        const addressVal = String(
+          row['כתובת'] || row['רחוב'] || row['Address'] || 'נווה יוסף, חיפה'
+        ).trim();
+        const cityVal = String(row['עיר'] || row['City'] || 'חיפה').trim();
+        const idMarkVal = String(
+          row['סימן זיהוי'] || row['הערות'] || row['Notes'] || 'יובא מאקסל'
+        ).trim();
+        const connVal = String(
+          row['קשר פרטי'] || row['קשר'] || 'ידיד בית חב״ד'
+        ).trim();
+        const rawId = String(
+          row['תעודת זהות'] || row['ת.ז.'] || row['4 ספרות אחרונות ת.ז.'] || '000000000'
+        ).trim();
+        const last4 = rawId.slice(-4).padStart(4, '0');
+
+        await onSaveDonor({
+          fullName: name,
+          identifierMark: idMarkVal,
+          personalConnection: connVal,
+          encryptedNationalId: encryptSensitiveString(rawId),
+          nationalIdLast4: last4,
+          phone: phoneVal,
+          email: emailVal || undefined,
+          address: addressVal,
+          city: cityVal,
+          lat: Number(row['קו רוחב (Lat)']) || Number((32.784 + (Math.random() - 0.5) * 0.005).toFixed(5)),
+          lng: Number(row['קו אורך (Lng)']) || Number((35.0195 + (Math.random() - 0.5) * 0.005).toFixed(5)),
+          significantDatesJson: JSON.stringify([]),
+          interactionsJson: JSON.stringify([]),
+          nextActionText: String(row['הפעולה הבאה'] || '').trim() || undefined,
+          attachmentsJson: JSON.stringify([]),
+        });
+        importedCount++;
+      }
+
+      setSyncMessage({
+        type: 'success',
+        text: `יובאו בהצלחה ${importedCount} אנשי קשר מתוך קובץ האקסל "${file.name}".`,
+      });
+    } catch (err) {
+      setSyncMessage({
+        type: 'error',
+        text: `שגיאה בקריאת קובץ האקסל: ${err instanceof Error ? err.message : 'קובץ לא תקין'}`,
+      });
+    } finally {
+      if (excelFileInputRef.current) {
+        excelFileInputRef.current.value = '';
+      }
+    }
+  };
+
+  // --- השגת Access Token לחשבון Google Contacts ---
+  const ensureGoogleAccessToken = async (): Promise<string | null> => {
+    let token = await getAccessToken();
+    if (!token) {
+      const signInRes = await googleSignIn();
+      token = signInRes?.accessToken || null;
+    }
+    return token;
+  };
+
+  // --- ייבוא מאנשי קשר של גוגל (Google Contacts People API) ---
+  const handleImportFromGoogleContacts = async () => {
+    if (!canWriteCrm) return;
+    setIsSyncingGoogle(true);
+    setSyncMessage(null);
+
+    try {
+      const token = await ensureGoogleAccessToken();
+      if (!token) {
+        setSyncMessage({
+          type: 'error',
+          text: 'נדרשת התחברות לחשבון Google כדי לייבא מאנשי הקשר של גוגל.',
+        });
+        return;
+      }
+
+      const res = await fetch(
+        'https://people.googleapis.com/v1/people/me/connections?personFields=names,phoneNumbers,emailAddresses,addresses,biographies,organizations&pageSize=200',
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData?.error?.message || `שגיאת Google Contacts (${res.status})`);
+      }
+
+      const data = await res.json();
+      const connections = Array.isArray(data.connections) ? data.connections : [];
+
+      let importedCount = 0;
+      for (const person of connections) {
+        const name = person.names?.[0]?.displayName?.trim();
+        if (!name) continue;
+
+        // Avoid duplicating if same fullName & phone already exist
+        const phoneVal = person.phoneNumbers?.[0]?.value?.trim() || '';
+        const alreadyExists = allActiveDonors.some(
+          (d) => d.fullName === name && (!phoneVal || d.phone === phoneVal)
+        );
+        if (alreadyExists) continue;
+
+        const emailVal = person.emailAddresses?.[0]?.value?.trim() || '';
+        const addressVal =
+          person.addresses?.[0]?.formattedValue?.trim() ||
+          person.addresses?.[0]?.streetAddress?.trim() ||
+          'נווה יוסף, חיפה';
+        const bioVal =
+          person.biographies?.[0]?.value?.trim() ||
+          person.organizations?.[0]?.name?.trim() ||
+          'יובא מאנשי קשר של גוגל';
+
+        await onSaveDonor({
+          fullName: name,
+          identifierMark: bioVal,
+          personalConnection: 'סונכרן מ-Google Contacts',
+          encryptedNationalId: encryptSensitiveString('000000000'),
+          nationalIdLast4: '0000',
+          phone: phoneVal,
+          email: emailVal || undefined,
+          address: addressVal,
+          city: 'חיפה',
+          lat: Number((32.784 + (Math.random() - 0.5) * 0.005).toFixed(5)),
+          lng: Number((35.0195 + (Math.random() - 0.5) * 0.005).toFixed(5)),
+          significantDatesJson: JSON.stringify([]),
+          interactionsJson: JSON.stringify([]),
+          attachmentsJson: JSON.stringify([]),
+        });
+        importedCount++;
+      }
+
+      setSyncMessage({
+        type: 'success',
+        text:
+          importedCount > 0
+            ? `יובאו בהצלחה ${importedCount} אנשי קשר חדשים מחשבון Google Contacts שלך.`
+            : 'הסנכרון מול Google Contacts הושלם (כל אנשי הקשר כבר קיימים במערכת או שהרשימה ריקה).',
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes('popup-closed-by-user')) {
+        setSyncMessage({
+          type: 'error',
+          text: `שגיאה בייבוא מ-Google Contacts: ${msg}`,
+        });
+      }
+    } finally {
+      setIsSyncingGoogle(false);
+    }
+  };
+
+  // --- ייצוא לאנשי קשר של גוגל (עם חלונית אישור מפורשת כנדרש) ---
+  const handleConfirmExportToGoogleContacts = async () => {
+    setShowGoogleExportConfirm(false);
+    setIsSyncingGoogle(true);
+    setSyncMessage(null);
+
+    try {
+      const token = await ensureGoogleAccessToken();
+      if (!token) {
+        setSyncMessage({
+          type: 'error',
+          text: 'נדרשת התחברות לחשבון Google כדי לייצא לאנשי הקשר של גוגל.',
+        });
+        return;
+      }
+
+      let exportedCount = 0;
+      for (const donor of allActiveDonors) {
+        const payload = {
+          names: [{ givenName: donor.fullName }],
+          phoneNumbers: donor.phone ? [{ value: donor.phone, type: 'mobile' }] : [],
+          emailAddresses: donor.email ? [{ value: donor.email, type: 'home' }] : [],
+          addresses: donor.address
+            ? [{ streetAddress: donor.address, city: donor.city || 'חיפה', type: 'home' }]
+            : [],
+          biographies: [
+            {
+              value: `${donor.identifierMark} | קשר: ${donor.personalConnection}`,
+              contentType: 'TEXT_PLAIN',
+            },
+          ],
+        };
+
+        const res = await fetch('https://people.googleapis.com/v1/people:createContact', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        });
+
+        if (res.ok) {
+          exportedCount++;
+        }
+      }
+
+      setSyncMessage({
+        type: 'success',
+        text: `יוצאו בהצלחה ${exportedCount} אנשי קשר מהמערכת אל Google Contacts בחשבונך.`,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes('popup-closed-by-user')) {
+        setSyncMessage({
+          type: 'error',
+          text: `שגיאה בייצוא ל-Google Contacts: ${msg}`,
+        });
+      }
+    } finally {
+      setIsSyncingGoogle(false);
+    }
+  };
+
+  const handleCreateDonor = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!fullName.trim() || !canWriteCrm) return;
+
+    const cleanId = nationalIdPlain.trim() || '000000000';
+    const last4 = cleanId.slice(-4).padStart(4, '0');
+    const sigDates: SignificantHebrewDateItem[] = [
+      {
+        id: 'sd_' + Date.now(),
+        type: 'birthday',
+        title: sigTitle,
+        hebrewDay: sigTriplet.day,
+        hebrewMonth: sigTriplet.month,
+        hebrewYear: sigTriplet.year,
+      },
+    ];
+
+    await onSaveDonor({
+      fullName: fullName.trim(),
+      identifierMark: identifierMark.trim() || 'ידיד בית חב״ד',
+      personalConnection: personalConnection.trim() || 'קשר קהילתי',
+      encryptedNationalId: encryptSensitiveString(cleanId),
+      nationalIdLast4: last4,
+      phone: phone.trim(),
+      email: email.trim(),
+      address: address.trim(),
+      city: 'חיפה',
+      lat: Number((32.784 + (Math.random() - 0.5) * 0.005).toFixed(5)),
+      lng: Number((35.0195 + (Math.random() - 0.5) * 0.005).toFixed(5)),
+      significantDatesJson: JSON.stringify(sigDates),
+      interactionsJson: JSON.stringify([]),
+      nextActionText: nextActionText.trim(),
+      nextActionDate: nextActionDate || undefined,
+      attachmentsJson: JSON.stringify([]),
+    });
+
+    setFullName('');
+    setIdentifierMark('');
+    setPersonalConnection('');
+    setNationalIdPlain('');
+    setPhone('');
+    setAddress('');
+    setNextActionText('');
+    setNextActionDate('');
+    setShowDonorForm(false);
+  };
+
+  const handleAddInteraction = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedDonor || !interactionSummary.trim() || !canWriteCrm) return;
+
+    let list: DonorInteractionItem[] = [];
+    try {
+      list = JSON.parse(selectedDonor.interactionsJson || '[]');
+    } catch {
+      list = [];
+    }
+
+    const newItem: DonorInteractionItem = {
+      id: 'int_' + Date.now(),
+      date: new Date().toISOString().slice(0, 10),
+      type: interactionType,
+      summary: interactionSummary.trim(),
+      recordedBy: 'שליח / רכז CRM',
+    };
+
+    await onSaveDonor(
+      {
+        fullName: selectedDonor.fullName,
+        identifierMark: selectedDonor.identifierMark,
+        personalConnection: selectedDonor.personalConnection,
+        encryptedNationalId: selectedDonor.encryptedNationalId,
+        nationalIdLast4: selectedDonor.nationalIdLast4,
+        phone: selectedDonor.phone,
+        email: selectedDonor.email,
+        address: selectedDonor.address,
+        city: selectedDonor.city,
+        lat: selectedDonor.lat,
+        lng: selectedDonor.lng,
+        significantDatesJson: selectedDonor.significantDatesJson,
+        interactionsJson: JSON.stringify([newItem, ...list]),
+        nextActionText: selectedDonor.nextActionText,
+        nextActionDate: selectedDonor.nextActionDate,
+        attachmentsJson: selectedDonor.attachmentsJson,
+      },
+      selectedDonor.id
+    );
+    setInteractionSummary('');
+  };
+
+  const handleCreateCommunityEntity = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!titleOrName.trim() || !canWriteCrm) return;
+    await onSaveCommunityEntity({
+      entityType,
+      titleOrName: titleOrName.trim(),
+      phoneOrSchedule: phoneOrSchedule.trim(),
+      areaOrAddress: areaOrAddress.trim(),
+      lat: 32.7842,
+      lng: 35.0198,
+      notes: entityNotes.trim(),
+      isActive: true,
+    });
+    setTitleOrName('');
+    setPhoneOrSchedule('');
+    setAreaOrAddress('');
+    setEntityNotes('');
+    setShowEntityForm(false);
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-4">
+        <div>
+          <h2 className="text-2xl font-bold text-slate-900">
+            CRM תורמים, אנשי קשר, מתנדבים ושיעורים קבועים
+          </h2>
+          <p className="text-sm text-slate-600">
+            ניהול תורמים ואנשי קשר עם ייבוא וייצוא דו-כיווני מ/אל <strong>Google Contacts</strong> וטבלאות <strong>Excel</strong>.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg">
+            <button
+              type="button"
+              onClick={() => setSubTab('donors')}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
+                subTab === 'donors' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'
+              }`}
+            >
+              תורמים ואנשי קשר ({allActiveDonors.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setSubTab('volunteers_classes')}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
+                subTab === 'volunteers_classes' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'
+              }`}
+            >
+              מתנדבים ושיעורים קבועים ({communityEntities.filter((c) => !c.deletedAt).length})
+            </button>
+          </div>
+
+          {canWriteCrm && subTab === 'donors' && (
+            <button
+              type="button"
+              onClick={() => setShowDonorForm(!showDonorForm)}
+              className="px-4 py-2 bg-slate-900 text-white text-xs font-semibold rounded-lg hover:bg-slate-800 flex items-center gap-1.5 whitespace-nowrap"
+            >
+              <Plus className="w-4 h-4" />
+              תורם / איש קשר חדש
+            </button>
+          )}
+
+          {canWriteCrm && subTab === 'volunteers_classes' && (
+            <button
+              type="button"
+              onClick={() => setShowEntityForm(!showEntityForm)}
+              className="px-4 py-2 bg-slate-900 text-white text-xs font-semibold rounded-lg hover:bg-slate-800 flex items-center gap-1.5 whitespace-nowrap"
+            >
+              <Plus className="w-4 h-4" />
+              מתנדב / שיעור קבוע חדש
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* סרגל ייבוא וייצוא: Google Contacts + טבלת אקסל */}
+      <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-wrap items-center justify-between gap-4">
+        <div className="space-y-0.5">
+          <h3 className="text-sm font-bold text-slate-900">
+            ייבוא וייצוא אנשי קשר (Google Contacts וטבלת Excel)
+          </h3>
+          <p className="text-xs text-slate-500">
+            סנכרן את מאגר אנשי הקשר של בית חב״ד ישירות מול אנשי הקשר של גוגל או קובצי אקסל (.xlsx / .csv)
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Excel Import */}
+          <input
+            ref={excelFileInputRef}
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            onChange={handleImportExcelFile}
+            className="hidden"
+          />
+          {canWriteCrm && (
+            <button
+              type="button"
+              onClick={() => excelFileInputRef.current?.click()}
+              className="px-3 py-1.5 text-xs font-semibold bg-emerald-50 text-emerald-900 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition-colors flex items-center gap-1.5 whitespace-nowrap"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              <span>ייבוא מטבלת אקסל</span>
+            </button>
+          )}
+
+          {/* Excel Export */}
+          <button
+            type="button"
+            onClick={handleExportExcel}
+            className="px-3 py-1.5 text-xs font-semibold bg-white text-slate-800 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors flex items-center gap-1.5 whitespace-nowrap"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>ייצוא לטבלת אקסל (.xlsx)</span>
+          </button>
+
+          {/* Google Contacts Import */}
+          {canWriteCrm && (
+            <button
+              type="button"
+              disabled={isSyncingGoogle}
+              onClick={handleImportFromGoogleContacts}
+              className="px-3 py-1.5 text-xs font-semibold bg-blue-50 text-blue-900 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors flex items-center gap-1.5 whitespace-nowrap disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncingGoogle ? 'animate-spin' : ''}`} />
+              <span>ייבוא מאנשי קשר של גוגל</span>
+            </button>
+          )}
+
+          {/* Google Contacts Export */}
+          <button
+            type="button"
+            disabled={isSyncingGoogle}
+            onClick={() => setShowGoogleExportConfirm(true)}
+            className="px-3 py-1.5 text-xs font-semibold bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition-colors flex items-center gap-1.5 whitespace-nowrap disabled:opacity-50"
+          >
+            <Upload className="w-3.5 h-3.5" />
+            <span>ייצוא לאנשי קשר של גוגל</span>
+          </button>
+        </div>
+      </div>
+
+      {/* חלונית אישור מפורשת לפני ייצוא ל-Google Contacts */}
+      {showGoogleExportConfirm && (
+        <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 flex flex-wrap items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="text-sm font-bold text-slate-900">
+              אישור ייצוא {allActiveDonors.length} אנשי קשר אל Google Contacts
+            </div>
+            <p className="text-xs text-slate-700">
+              פעולה זו תיצור רשומות אנשי קשר חדשות בחשבון Google Contacts שלך עבור {allActiveDonors.length} אנשי הקשר הפעילים במערכת. האם להמשיך?
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowGoogleExportConfirm(false)}
+              className="px-3 py-1.5 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50"
+            >
+              ביטול
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmExportToGoogleContacts}
+              className="px-4 py-1.5 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800"
+            >
+              אשר וייצא ל-Google Contacts
+            </button>
+          </div>
+        </div>
+      )}
+
+      {syncMessage && (
+        <div
+          className={`p-4 rounded-xl border flex items-center justify-between text-sm ${
+            syncMessage.type === 'success'
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+              : 'bg-red-50 border-red-200 text-red-900'
+          }`}
+        >
+          <div className="flex items-center gap-2 font-semibold">
+            {syncMessage.type === 'success' ? (
+              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+            ) : (
+              <AlertCircle className="w-5 h-5 text-red-600 shrink-0" />
+            )}
+            <span>{syncMessage.text}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSyncMessage(null)}
+            className="text-xs underline"
+          >
+            סגור
+          </button>
+        </div>
+      )}
+
+      {subTab === 'donors' ? (
+        <>
+          {showDonorForm && canWriteCrm && (
+            <form
+              onSubmit={handleCreateDonor}
+              className="bg-white border border-slate-200 rounded-xl p-6 space-y-4"
+            >
+              <h3 className="text-base font-bold text-slate-900 border-b border-slate-100 pb-2">
+                הוספת תורם / איש קשר חדש למאגר ה-CRM
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">שם מלא *</label>
+                  <input
+                    type="text"
+                    required
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    placeholder="למשל: ר׳ ישראל ישראלי"
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">סימן זיהוי *</label>
+                  <input
+                    type="text"
+                    required
+                    value={identifierMark}
+                    onChange={(e) => setIdentifierMark(e.target.value)}
+                    placeholder="למשל: בעל חנות אופטיקה, מתפלל בשבת"
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">קשר פרטי *</label>
+                  <input
+                    type="text"
+                    required
+                    value={personalConnection}
+                    onChange={(e) => setPersonalConnection(e.target.value)}
+                    placeholder="למשל: ידיד אישי של השליח מתשע״ט"
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    תעודת זהות (תוצפן במאגר כ-••••1234) *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    maxLength={9}
+                    value={nationalIdPlain}
+                    onChange={(e) => setNationalIdPlain(e.target.value)}
+                    placeholder="9 ספרות"
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg font-mono tabular-nums"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">טלפון *</label>
+                  <input
+                    type="text"
+                    required
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    placeholder="052-0000000"
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">כתובת מגורים (לחיבור למפה) *</label>
+                  <input
+                    type="text"
+                    required
+                    value={address}
+                    onChange={(e) => setAddress(e.target.value)}
+                    placeholder="רחוב ומספר בית, עיר"
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    סוג מועד עברי משמעותי (יום הולדת / אזכרה)
+                  </label>
+                  <input
+                    type="text"
+                    value={sigTitle}
+                    onChange={(e) => setSigTitle(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <HebrewDatePicker
+                    label="תאריך עברי משמעותי (לוח שנה עברי)"
+                    value={sigTriplet}
+                    onChange={(newTriplet) => setSigTriplet(newTriplet)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">הפעולה הבאה למעקב</label>
+                  <input
+                    type="text"
+                    value={nextActionText}
+                    onChange={(e) => setNextActionText(e.target.value)}
+                    placeholder="למשל: לתאם ביקור בית לפני החג"
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <HebrewDatePicker
+                    allowClear
+                    clearLabel="ללא תאריך יעד לפעולה הבאה"
+                    label="תאריך יעד לפעולה הבאה (לוח שנה עברי)"
+                    value={nextActionDate ? fromGregorianDate(nextActionDate).triplet : null}
+                    onChange={(_tr, conv) => setNextActionDate(conv.gregorianIso)}
+                    onClear={() => setNextActionDate('')}
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowDonorForm(false)}
+                  className="px-4 py-2 text-xs text-slate-600"
+                >
+                  ביטול
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-slate-900 text-white text-xs font-semibold rounded-lg"
+                >
+                  שמור תורם במאגר
+                </button>
+              </div>
+            </form>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Donors List */}
+            <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="חיפוש לפי שם, סימן זיהוי, כתובת..."
+                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg"
+                />
+              </div>
+              <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={filterNextActionOnly}
+                  onChange={(e) => setFilterNextActionOnly(e.target.checked)}
+                />
+                <span>הצג רק תורמים עם &quot;הפעולה הבאה&quot; פתוחה</span>
+              </label>
+
+              <div className="divide-y divide-slate-100 max-h-[540px] overflow-y-auto">
+                {activeDonors.map((d) => {
+                  const isSelected = selectedDonor?.id === d.id;
+                  return (
+                    <div
+                      key={d.id}
+                      onClick={() => onSelectDonorId(d.id)}
+                      className={`p-3 rounded-lg cursor-pointer transition-colors ${
+                        isSelected ? 'bg-slate-900 text-white' : 'hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="font-bold text-sm">{d.fullName}</div>
+                      <div className={`text-xs mt-0.5 ${isSelected ? 'text-slate-300' : 'text-slate-600'}`}>
+                        {d.identifierMark}
+                      </div>
+                      <div className={`text-xs mt-1 font-mono ${isSelected ? 'text-slate-300' : 'text-slate-500'}`}>
+                        {d.phone} · {d.address}
+                      </div>
+                      {d.nextActionText && (
+                        <div
+                          className={`text-[11px] mt-1.5 font-medium ${
+                            isSelected ? 'text-amber-300' : 'text-amber-800'
+                          }`}
+                        >
+                          הפעולה הבאה: {d.nextActionText}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Selected Donor Details */}
+            <div className="lg:col-span-2 space-y-6">
+              {selectedDonor ? (
+                <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-6">
+                  <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-100 pb-4">
+                    <div>
+                      <h3 className="text-xl font-bold text-slate-900">{selectedDonor.fullName}</h3>
+                      <p className="text-sm text-slate-700 mt-0.5">
+                        <strong>סימן זיהוי:</strong> {selectedDonor.identifierMark}
+                      </p>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        <strong>קשר פרטי:</strong> {selectedDonor.personalConnection}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <div className="bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg text-xs flex items-center gap-2">
+                        <span className="text-slate-500">ת.ז. מוצפנת:</span>
+                        <span className="font-mono font-bold text-slate-900 tabular-nums">
+                          {formatMaskedNationalId(
+                            selectedDonor.nationalIdLast4,
+                            revealedIds[selectedDonor.id]
+                          )}
+                        </span>
+                        {canRevealNationalId && (
+                          <button
+                            type="button"
+                            onClick={() => handleToggleRevealId(selectedDonor)}
+                            className="text-slate-600 hover:text-slate-900"
+                            title="חשוף תעודת זהות (מתועד ביומן הביקורת)"
+                          >
+                            {revealedIds[selectedDonor.id] ? (
+                              <EyeOff className="w-3.5 h-3.5" />
+                            ) : (
+                              <Eye className="w-3.5 h-3.5" />
+                            )}
+                          </button>
+                        )}
+                      </div>
+
+                      {canWriteCrm && (
+                        <button
+                          type="button"
+                          onClick={() => onSoftDeleteDonor(selectedDonor.id)}
+                          className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
+                          title="מחיקה רכה"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Contact & Next Action */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                    <div className="p-3 bg-slate-50 rounded-lg space-y-1">
+                      <div className="flex items-center gap-2 text-slate-700">
+                        <Phone className="w-4 h-4 text-slate-500" />
+                        <span className="font-mono">{selectedDonor.phone}</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-slate-700">
+                        <MapPin className="w-4 h-4 text-slate-500" />
+                        <span>{selectedDonor.address}</span>
+                      </div>
+                    </div>
+
+                    <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-lg">
+                      <div className="text-xs font-bold text-amber-900">הפעולה הבאה למעקב אישי:</div>
+                      <div className="text-sm font-semibold text-slate-900 mt-0.5">
+                        {selectedDonor.nextActionText || 'אין פעולה פתוחה כעת'}
+                      </div>
+                      {selectedDonor.nextActionDate && (
+                        <div className="text-xs text-amber-800 font-mono mt-0.5">
+                          תאריך יעד לתזכורת: {fromGregorianDate(selectedDonor.nextActionDate).hebrewDisplay} ({selectedDonor.nextActionDate})
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Significant Hebrew Dates (Leap-year aware) */}
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-900 mb-2 flex items-center gap-1.5">
+                      <Calendar className="w-4 h-4 text-slate-700" />
+                      תאריכים משמעותיים עבריים (ימי הולדת, נישואין ואזכרות — מותאם לשנה פשוטה/מעוברת)
+                    </h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {(() => {
+                        let sigs: SignificantHebrewDateItem[] = [];
+                        try {
+                          sigs = JSON.parse(selectedDonor.significantDatesJson || '[]');
+                        } catch {
+                          sigs = [];
+                        }
+                        if (sigs.length === 0) {
+                          return <div className="text-xs text-slate-500">לא הוגדרו תאריכים עבריים.</div>;
+                        }
+                        return sigs.map((s) => {
+                          const thisYear = getAnniversaryInHebrewYear(
+                            { day: s.hebrewDay, month: s.hebrewMonth, year: s.hebrewYear },
+                            5787
+                          );
+                          return (
+                            <div
+                              key={s.id}
+                              className="p-3 border border-slate-200 rounded-lg text-xs space-y-1"
+                            >
+                              <div className="font-bold text-slate-900">{s.title}</div>
+                              <div className="text-slate-700">
+                                מועד השנה (תשפ״ז): <strong>{thisYear.hebrewDisplay}</strong>
+                              </div>
+                              <div className="text-slate-500 font-mono tabular-nums">
+                                לועזי קרוב: {thisYear.gregorianIso} · שקיעה: {thisYear.sunsetTime}
+                              </div>
+                            </div>
+                          );
+                        });
+                      })()}
+                    </div>
+                  </div>
+
+                  {/* Automatic Donation History from Financial Module */}
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-900 mb-2 flex items-center gap-1.5">
+                      <FileText className="w-4 h-4 text-slate-700" />
+                      היסטוריית תרומות והתחייבויות (מתעדכנת אוטומטית מהמודול הפיננסי)
+                    </h4>
+                    <div className="border border-slate-200 rounded-lg overflow-hidden">
+                      <table className="w-full text-right text-xs">
+                        <thead className="bg-slate-50 border-b border-slate-200 text-slate-600">
+                          <tr>
+                            <th className="py-2 px-3">תאריך</th>
+                            <th className="py-2 px-3">תיאור וקופה</th>
+                            <th className="py-2 px-3">קבלה</th>
+                            <th className="py-2 px-3">סכום ברוטו</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {transactions
+                            .filter((t) => !t.deletedAt && t.donorId === selectedDonor.id)
+                            .map((t) => (
+                              <tr key={t.id}>
+                                <td className="py-2 px-3 font-mono">{t.hebrewDateDisplay || t.date}</td>
+                                <td className="py-2 px-3">
+                                  {t.description} ({t.fundSource === 'regular' ? 'כספים רגילים' : 'עמותה שנייה'})
+                                </td>
+                                <td className="py-2 px-3 font-mono">{t.receiptNumber || 'ממתין'}</td>
+                                <td className="py-2 px-3 font-mono font-bold text-emerald-700">
+                                  {formatAgorotToIls(t.grossAmountAgorot)}
+                                </td>
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* Home Visits & Calls Tracking */}
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-900 mb-2 flex items-center gap-1.5">
+                      <History className="w-4 h-4 text-slate-700" />
+                      מעקב קשר: ביקורי בית, שיחות ופגישות
+                    </h4>
+                    {canWriteCrm && (
+                      <form onSubmit={handleAddInteraction} className="flex gap-2 mb-3">
+                        <select
+                          value={interactionType}
+                          onChange={(e) =>
+                            setInteractionType(e.target.value as 'home_visit' | 'phone_call' | 'meeting')
+                          }
+                          className="px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg bg-white"
+                        >
+                          <option value="home_visit">ביקור בית</option>
+                          <option value="phone_call">שיחת טלפון</option>
+                          <option value="meeting">פגישה אישית</option>
+                        </select>
+                        <input
+                          type="text"
+                          value={interactionSummary}
+                          onChange={(e) => setInteractionSummary(e.target.value)}
+                          placeholder="תעד סיכום ביקור בית או שיחה..."
+                          className="flex-1 px-3 py-1.5 text-xs border border-slate-300 rounded-lg"
+                        />
+                        <button
+                          type="submit"
+                          className="px-3 py-1.5 bg-slate-900 text-white text-xs font-semibold rounded-lg"
+                        >
+                          הוסף תיעוד
+                        </button>
+                      </form>
+                    )}
+                    <div className="space-y-2">
+                      {(() => {
+                        let list: DonorInteractionItem[] = [];
+                        try {
+                          list = JSON.parse(selectedDonor.interactionsJson || '[]');
+                        } catch {
+                          list = [];
+                        }
+                        return list.map((item) => (
+                          <div key={item.id} className="p-2.5 bg-slate-50 rounded-lg text-xs flex justify-between">
+                            <div>
+                              <strong className="text-slate-900">
+                                {item.type === 'home_visit'
+                                  ? 'ביקור בית'
+                                  : item.type === 'phone_call'
+                                  ? 'שיחת טלפון'
+                                  : 'פגישה'}
+                                :
+                              </strong>{' '}
+                              <span className="text-slate-700">{item.summary}</span>
+                            </div>
+                            <span className="font-mono text-slate-500">{item.date}</span>
+                          </div>
+                        ));
+                      })()}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </>
+      ) : (
+        <div className="space-y-4">
+          {showEntityForm && canWriteCrm && (
+            <form
+              onSubmit={handleCreateCommunityEntity}
+              className="bg-white border border-slate-200 rounded-xl p-6 space-y-4"
+            >
+              <h3 className="text-base font-bold text-slate-900">
+                הוספת מתנדב (ישות נפרדת ממשתמש מערכת) או שיעור/חוג קבוע
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">סוג רשומה</label>
+                  <select
+                    value={entityType}
+                    onChange={(e) => setEntityType(e.target.value as 'volunteer' | 'regular_class')}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white"
+                  >
+                    <option value="volunteer">מתנדב בקהילה</option>
+                    <option value="regular_class">שיעור תורה / חוג קבוע</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">שם המתנדב / כותרת השיעור *</label>
+                  <input
+                    type="text"
+                    required
+                    value={titleOrName}
+                    onChange={(e) => setTitleOrName(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">טלפון / מועד קבוע</label>
+                  <input
+                    type="text"
+                    value={phoneOrSchedule}
+                    onChange={(e) => setPhoneOrSchedule(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">אזור חלוקה / מיקום</label>
+                  <input
+                    type="text"
+                    value={areaOrAddress}
+                    onChange={(e) => setAreaOrAddress(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowEntityForm(false)}
+                  className="px-4 py-2 text-xs text-slate-600"
+                >
+                  ביטול
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-slate-900 text-white text-xs font-semibold rounded-lg"
+                >
+                  שמור רשומה
+                </button>
+              </div>
+            </form>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {communityEntities
+              .filter((c) => !c.deletedAt)
+              .map((ent) => (
+                <div
+                  key={ent.id}
+                  className="bg-white border border-slate-200 rounded-xl p-4 flex items-start justify-between"
+                >
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <UserCheck className="w-4 h-4 text-slate-700" />
+                      <span className="font-bold text-slate-900">{ent.titleOrName}</span>
+                    </div>
+                    <div className="text-xs text-slate-600">{ent.areaOrAddress}</div>
+                    {ent.phoneOrSchedule && (
+                      <div className="text-xs font-mono text-slate-500">{ent.phoneOrSchedule}</div>
+                    )}
+                    {ent.notes && <div className="text-xs text-slate-500">{ent.notes}</div>}
+                  </div>
+                  <span className="text-xs text-slate-500">
+                    {ent.entityType === 'volunteer'
+                      ? 'מתנדב שטח'
+                      : ent.entityType === 'regular_class'
+                      ? 'שיעור קבוע'
+                      : 'הערת רחוב'}
+                  </span>
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};

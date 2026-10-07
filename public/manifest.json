@@ -1,0 +1,21 @@
+{
+  "id": "/",
+  "name": "בית חב״ד ERP — מערכת ניהול שנתית וקהילה",
+  "short_name": "חב״ד ERP",
+  "description": "מערכת ניהול תוכנית שנתית, משימות, כספים, תורמים ומפה לבית חב״ד עם תמיכה באופליין.",
+  "theme_color": "#0f172a",
+  "background_color": "#f8fafc",
+  "display": "standalone",
+  "start_url": "/",
+  "scope": "/",
+  "dir": "rtl",
+  "lang": "he",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
