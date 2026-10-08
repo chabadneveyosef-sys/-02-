@@ -21,7 +21,8 @@ interface HebrewDatePickerProps {
   label?: string;
 }
 
-const HEBREW_YEARS = [5785, 5786, 5787, 5788, 5789, 5790];
+// תמיכה בבחירת שנים עבריות עד 155 שנים אחורה (למשל משנת ה'תרל"ה / 5635 ועד ה'תשצ"ה / 5795) עבור ימי הולדת ואזכרות
+const HEBREW_YEARS = Array.from({ length: 161 }, (_, idx) => 5795 - idx);
 const HEBREW_MONTH_ORDER = [7, 8, 9, 10, 11, 12, 13, 1, 2, 3, 4, 5, 6]; // מתשרי עד אלול
 
 export const HebrewDatePicker: React.FC<HebrewDatePickerProps> = ({

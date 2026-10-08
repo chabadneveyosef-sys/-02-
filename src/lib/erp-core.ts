@@ -668,10 +668,13 @@ export function decryptSensitiveString(cipherText: string): string {
 }
 
 export function formatMaskedNationalId(last4: string, revealedPlain?: string): string {
+  if (!last4 || last4.trim() === '') {
+    return 'לא הוזן';
+  }
   if (revealedPlain) {
     return revealedPlain;
   }
-  const clean4 = (last4 || '0000').slice(-4).padStart(4, '0');
+  const clean4 = last4.slice(-4).padStart(4, '0');
   return `••••${clean4}`;
 }
 

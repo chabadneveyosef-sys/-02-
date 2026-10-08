@@ -74,6 +74,8 @@ export const TasksDagView: React.FC<TasksDagViewProps> = ({
   onSoftDeleteTask,
 }) => {
   const [showForm, setShowForm] = useState(false);
+  const [taskDisplayMode, setTaskDisplayMode] = useState<'two_columns' | 'table'>('two_columns');
+  const [taskSideFilter, setTaskSideFilter] = useState<string>('all'); // 'all' | 'open' | 'completed' | 'critical' | rootTaskId
   const [anchorStartDate, setAnchorStartDate] = useState(
     new Date().toISOString().slice(0, 10)
   );
@@ -1049,25 +1051,488 @@ export const TasksDagView: React.FC<TasksDagViewProps> = ({
         </form>
       )}
 
-      {/* עץ תתי-משימות היררכי עם + להוספה ותאריך ביצוע ותזכורות לצד כל משימה */}
-      <div className="bg-white border border-slate-300/90 rounded-xl overflow-hidden shadow-xs">
-        <div className="overflow-x-auto max-h-[720px]">
-          <table className="erp-table text-right">
-            <thead>
-              <tr className="text-xs font-semibold text-slate-700">
-                <th className="py-3.5 px-4 col-compact">ביצוע</th>
-                <th className="py-3.5 px-5 col-text-wide">עץ משימות ותתי-משימות (+ להוספה, מטרה ומבחן הצלחה)</th>
-                <th className="py-3.5 px-4 min-w-[310px]">תאריך ביצוע למשימה ותזכורות (מייל/מחשב/דשבורד/נייד)</th>
-                <th className="py-3.5 px-4 col-compact">משך (ימים)</th>
-                <th className="py-3.5 px-4 col-text-medium">תלויות קודמות (DAG)</th>
-                <th className="py-3.5 px-4 col-compact">המלצת התחלה ו-CPM</th>
-                <th className="py-3.5 px-4 text-left col-compact">פעולות</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200/80 text-sm">
-              {rootTasks.map((rootTask) => renderTaskTreeRows(rootTask, 0))}
-            </tbody>
-          </table>
+      {/* פריסת תכנון משימות: סרגל ניווט בצד + סידור משימות בשני טורים כדי שהשורה לא תהיה רחבה מידי */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {/* סרגל ניווט בצד למשימות ופרויקטים (3 עמודות) */}
+        <aside className="lg:col-span-3 bg-white border border-slate-300/90 rounded-xl p-4 space-y-4 lg:sticky lg:top-20">
+          <div className="border-b border-slate-200 pb-3">
+            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+              <FolderKanban className="w-4 h-4 text-blue-800" />
+              <span>סרגל ניווט משימות ופרויקטים</span>
+            </h3>
+            <p className="text-xs text-slate-600 mt-0.5">
+              סינון מהיר ומעבר בין פרויקטים כדי לשמור על שורות ממוקדות ונוחות לקריאה.
+            </p>
+          </div>
+
+          {/* מתג תצוגת 2 טורים / טבלה */}
+          <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg">
+            <button
+              type="button"
+              onClick={() => setTaskDisplayMode('two_columns')}
+              className={`flex-1 py-1.5 px-2 text-xs font-bold rounded-md transition-colors ${
+                taskDisplayMode === 'two_columns'
+                  ? 'bg-slate-900 text-white'
+                  : 'text-slate-700 hover:text-slate-900'
+              }`}
+            >
+              תצוגת שני טורים
+            </button>
+            <button
+              type="button"
+              onClick={() => setTaskDisplayMode('table')}
+              className={`flex-1 py-1.5 px-2 text-xs font-bold rounded-md transition-colors ${
+                taskDisplayMode === 'table'
+                  ? 'bg-slate-900 text-white'
+                  : 'text-slate-700 hover:text-slate-900'
+              }`}
+            >
+              תצוגת טבלה
+            </button>
+          </div>
+
+          <div className="space-y-1">
+            <div className="text-[11px] font-bold text-slate-500 px-2 pb-1">סינון לפי מצב:</div>
+            {[
+              { id: 'all', label: 'כל המשימות והפרויקטים', count: rootTasks.length },
+              {
+                id: 'open',
+                label: 'משימות פתוחות לביצוע',
+                count: activeTasks.filter((t) => !t.isCompleted).length,
+              },
+              {
+                id: 'critical',
+                label: 'במסלול הקריטי (CPM)',
+                count: cpmResult.criticalPathIds.length,
+              },
+              {
+                id: 'completed',
+                label: 'משימות שהושלמו',
+                count: activeTasks.filter((t) => t.isCompleted).length,
+              },
+            ].map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setTaskSideFilter(item.id)}
+                className={`w-full text-right px-3 py-2 rounded-lg text-xs font-semibold flex items-center justify-between transition-colors ${
+                  taskSideFilter === item.id
+                    ? 'bg-slate-900 text-white'
+                    : 'text-slate-700 hover:bg-slate-100'
+                }`}
+              >
+                <span>{item.label}</span>
+                <span
+                  className={`font-mono text-[11px] ${
+                    taskSideFilter === item.id ? 'text-blue-200' : 'text-slate-500'
+                  }`}
+                >
+                  {item.count}
+                </span>
+              </button>
+            ))}
+          </div>
+
+          {rootTasks.length > 0 && (
+            <div className="pt-3 border-t border-slate-200 space-y-1">
+              <div className="text-[11px] font-bold text-slate-500 px-2 pb-1">
+                ניווט מהיר לפי פרויקט / משימת אב:
+              </div>
+              <div className="max-h-72 overflow-y-auto space-y-1">
+                {rootTasks.map((rt) => {
+                  const subCount = activeTasks.filter((t) => t.parentId === rt.id).length;
+                  return (
+                    <button
+                      key={rt.id}
+                      type="button"
+                      onClick={() => setTaskSideFilter(rt.id)}
+                      className={`w-full text-right px-3 py-2 rounded-lg text-xs font-medium flex items-center justify-between gap-2 transition-colors ${
+                        taskSideFilter === rt.id
+                          ? 'bg-slate-900 text-white font-bold'
+                          : 'text-slate-800 hover:bg-slate-100'
+                      }`}
+                    >
+                      <span className="truncate">{rt.title}</span>
+                      <span
+                        className={`shrink-0 text-[11px] font-mono ${
+                          taskSideFilter === rt.id ? 'text-amber-300' : 'text-slate-500'
+                        }`}
+                      >
+                        {subCount > 0 ? `+${subCount}` : ''}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {canWrite && (
+            <div className="pt-3 border-t border-slate-200">
+              <button
+                type="button"
+                onClick={() => setShowForm(true)}
+                className="w-full py-2 px-3 bg-slate-900 text-white text-xs font-semibold rounded-lg hover:bg-slate-800 flex items-center justify-center gap-1.5"
+              >
+                <Plus className="w-4 h-4" />
+                <span>הוסף פרויקט / משימה חדשה</span>
+              </button>
+            </div>
+          )}
+        </aside>
+
+        {/* אזור תוכן המשימות המרכזי (9 עמודות) */}
+        <div className="lg:col-span-9 space-y-4">
+          {activeTasks.length === 0 ? (
+            <div className="bg-white border border-slate-300/90 rounded-xl p-10 text-center space-y-3">
+              <div className="text-base font-bold text-slate-900">
+                טרם הוזנו משימות או פרויקטים במערכת
+              </div>
+              <p className="text-xs text-slate-600 max-w-md mx-auto">
+                לחץ על &quot;משימה / פרויקט ראשי חדש&quot; כדי ליצור את עץ המשימות ותתי-המשימות עם תאריכי ביצוע בלוח העברי ותזכורות אוטומטיות.
+              </p>
+              {canWrite && (
+                <button
+                  type="button"
+                  onClick={() => setShowForm(true)}
+                  className="px-4 py-2 bg-slate-900 text-white text-xs font-semibold rounded-lg inline-flex items-center gap-1.5"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>צור משימה ראשונה</span>
+                </button>
+              )}
+            </div>
+          ) : taskDisplayMode === 'two_columns' ? (
+            /* סידור המשימות בשני טורים מאוזנים — כל שורת משימה קומפקטית וברורה ללא רוחב מופרז */
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 items-start">
+              {rootTasks
+                .filter((rt) => {
+                  if (taskSideFilter === 'all') return true;
+                  if (taskSideFilter === 'open') {
+                    const hasOpenChild = activeTasks.some(
+                      (c) => c.parentId === rt.id && !c.isCompleted
+                    );
+                    return !rt.isCompleted || hasOpenChild;
+                  }
+                  if (taskSideFilter === 'completed') {
+                    const hasCompletedChild = activeTasks.some(
+                      (c) => c.parentId === rt.id && c.isCompleted
+                    );
+                    return rt.isCompleted || hasCompletedChild;
+                  }
+                  if (taskSideFilter === 'critical') {
+                    const isRootCrit = cpmResult.criticalPathIds.includes(rt.id);
+                    const hasCritChild = activeTasks.some(
+                      (c) => c.parentId === rt.id && cpmResult.criticalPathIds.includes(c.id)
+                    );
+                    return isRootCrit || hasCritChild;
+                  }
+                  return rt.id === taskSideFilter;
+                })
+                .map((rootTask) => {
+                  const renderCompactTreeNode = (
+                    node: TaskNodeRecord,
+                    depth: number = 0
+                  ): React.ReactNode => {
+                    const children = activeTasks.filter((t) => t.parentId === node.id);
+                    const sched = cpmResult.schedules[node.id];
+                    const channels = parseTaskChannels(node.reminderChannelsJson);
+                    const daysBefore = node.reminderDaysBefore ?? 2;
+
+                    let deps: string[] = [];
+                    try {
+                      deps = JSON.parse(node.dependsOnIdsJson || '[]');
+                    } catch {
+                      deps = [];
+                    }
+
+                    return (
+                      <div
+                        key={node.id}
+                        className={`${
+                          depth > 0
+                            ? 'mt-3 mr-4 pr-3.5 border-r-2 border-blue-300/80 space-y-2'
+                            : 'space-y-3'
+                        }`}
+                      >
+                        <div
+                          className={`p-3.5 rounded-xl border transition-colors ${
+                            depth === 0
+                              ? 'bg-white border-slate-300/90 shadow-xs'
+                              : 'bg-slate-50/90 border-slate-200/90'
+                          }`}
+                        >
+                          {/* שורה עליונה: סימון ביצוע + כותרת + כפתור + לתת-משימה + מחיקה */}
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-start gap-2.5">
+                              <button
+                                type="button"
+                                disabled={!canWrite}
+                                onClick={() => onToggleTaskCompleted(node)}
+                                className="mt-0.5 text-slate-700 hover:text-slate-900 shrink-0"
+                                title={node.isCompleted ? 'סמן כלא בוצע' : 'סמן משימה כבוצעה'}
+                              >
+                                {node.isCompleted ? (
+                                  <CheckSquare className="w-5 h-5 text-emerald-700" />
+                                ) : (
+                                  <Square className="w-5 h-5 text-slate-500" />
+                                )}
+                              </button>
+                              <div>
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  {depth > 0 && (
+                                    <span className="text-blue-700 font-bold text-xs">↳</span>
+                                  )}
+                                  {node.isProject && (
+                                    <FolderKanban className="w-4 h-4 text-amber-700 shrink-0" />
+                                  )}
+                                  <span
+                                    className={`font-bold text-slate-900 text-sm leading-snug ${
+                                      node.isCompleted ? 'line-through text-slate-400' : ''
+                                    }`}
+                                  >
+                                    {node.title}
+                                  </span>
+                                </div>
+                                {node.assignee && (
+                                  <div className="text-xs text-slate-600 mt-0.5">
+                                    אחראי: <strong>{node.assignee}</strong> · משך: {node.durationDays} ימים
+                                  </div>
+                                )}
+                                {node.strategicGoal && (
+                                  <div className="text-xs text-slate-700 mt-1 leading-relaxed">
+                                    <strong>מטרה:</strong> {node.strategicGoal}
+                                  </div>
+                                )}
+                                {node.successCriteria && (
+                                  <div className="text-xs text-slate-600 mt-0.5 leading-relaxed">
+                                    <strong>מבחן הצלחה:</strong> {node.successCriteria}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            {canWrite && (
+                              <div className="flex items-center gap-1 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenAddSubtask(node)}
+                                  className="px-2 py-1 text-xs font-bold bg-slate-900 text-white rounded-md hover:bg-slate-800 flex items-center gap-1"
+                                  title="הוסף תת-משימה נוספת (+)"
+                                >
+                                  <Plus className="w-3.5 h-3.5" />
+                                  <span>תת-משימה</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => onSoftDeleteTask(node.id)}
+                                  className="p-1 text-red-600 hover:bg-red-50 rounded"
+                                  title="מחיקה רכה"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* תאריך ביצוע בלוח עברי + תזכורות */}
+                          <div className="mt-3 pt-2.5 border-t border-slate-200/80 space-y-2 text-xs">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <span className="font-bold text-slate-800 flex items-center gap-1">
+                                <Calendar className="w-3.5 h-3.5 text-blue-800" />
+                                <span>תאריך ביצוע (עברי):</span>
+                              </span>
+                              <HebrewDatePicker
+                                compact
+                                disabled={!canWrite}
+                                allowClear
+                                clearLabel="ללא תאריך (פרויקט)"
+                                value={
+                                  node.targetDate
+                                    ? fromGregorianDate(node.targetDate).triplet
+                                    : null
+                                }
+                                onChange={(_tr, conv) =>
+                                  handleUpdateTaskExecutionDateAndReminders(
+                                    node,
+                                    conv.gregorianIso
+                                  )
+                                }
+                                onClear={() =>
+                                  handleUpdateTaskExecutionDateAndReminders(node, '')
+                                }
+                              />
+                            </div>
+
+                            {/* ערוצי תזכורת ומועד שליחה */}
+                            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                              <div className="flex items-center gap-1 text-[11px]">
+                                <Bell className="w-3 h-3 text-amber-600" />
+                                <select
+                                  disabled={!canWrite}
+                                  value={daysBefore}
+                                  onChange={(e) =>
+                                    handleUpdateTaskExecutionDateAndReminders(
+                                      node,
+                                      node.targetDate || '',
+                                      Number(e.target.value),
+                                      channels
+                                    )
+                                  }
+                                  className="px-1.5 py-0.5 text-[11px] border border-slate-300 rounded bg-white text-slate-800"
+                                >
+                                  <option value={0}>תזכורת ביום הביצוע</option>
+                                  <option value={1}>יום לפני + ביום הביצוע</option>
+                                  <option value={2}>יומיים לפני + ביום הביצוע</option>
+                                  <option value={3}>3 ימים לפני + ביום הביצוע</option>
+                                  <option value={7}>שבוע לפני + ביום הביצוע</option>
+                                </select>
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-1">
+                                {ALL_CHANNELS.map((ch) => {
+                                  const active = channels.includes(ch);
+                                  const Icon = CHANNEL_META[ch].icon;
+                                  return (
+                                    <button
+                                      key={ch}
+                                      type="button"
+                                      disabled={!canWrite}
+                                      onClick={() => {
+                                        const next = active
+                                          ? channels.filter((c) => c !== ch)
+                                          : [...channels, ch];
+                                        handleUpdateTaskExecutionDateAndReminders(
+                                          node,
+                                          node.targetDate || '',
+                                          daysBefore,
+                                          next
+                                        );
+                                      }}
+                                      className={`px-1.5 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors ${
+                                        active
+                                          ? 'bg-slate-900 text-white border-slate-900'
+                                          : 'bg-white text-slate-500 border-slate-200'
+                                      }`}
+                                    >
+                                      <Icon className="w-2.5 h-2.5" />
+                                      <span>{CHANNEL_META[ch].label}</span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+
+                            {/* CPM & Dependencies compact footer */}
+                            <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-[11px] text-slate-600">
+                              <div>
+                                {sched && (
+                                  <span className="font-mono">
+                                    התחלה מומלצת: {sched.recommendedStartDate}
+                                    {sched.isCritical ? ' · ★ קריטי (CPM)' : ''}
+                                  </span>
+                                )}
+                              </div>
+                              {deps.length > 0 && (
+                                <span>
+                                  תלוי ב-{deps.length} משימות קודמות
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* טופס הוספת תת-משימה (+) מתחת לצומת הנוכחי */}
+                          {addingSubtaskUnderId === node.id && canWrite && (
+                            <form
+                              onSubmit={(e) => handleConfirmAddSubtask(e, node)}
+                              className="mt-3 pt-3 border-t border-amber-300 bg-amber-50/70 p-3 rounded-lg space-y-2.5"
+                            >
+                              <div className="text-xs font-bold text-slate-900 flex items-center justify-between">
+                                <span>+ הוספת תת-משימה תחת &quot;{node.title}&quot;</span>
+                                <button
+                                  type="button"
+                                  onClick={() => setAddingSubtaskUnderId(null)}
+                                  className="text-slate-500 hover:text-slate-800"
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                              <input
+                                type="text"
+                                required
+                                autoFocus
+                                value={subtaskTitle}
+                                onChange={(e) => setSubtaskTitle(e.target.value)}
+                                placeholder="שם תת-המשימה..."
+                                className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg bg-white"
+                              />
+                              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                                <HebrewDatePicker
+                                  compact
+                                  allowClear
+                                  clearLabel="ללא תאריך (פרויקט)"
+                                  value={
+                                    subtaskTargetDate
+                                      ? fromGregorianDate(subtaskTargetDate).triplet
+                                      : null
+                                  }
+                                  onChange={(_tr, conv) => setSubtaskTargetDate(conv.gregorianIso)}
+                                  onClear={() => setSubtaskTargetDate('')}
+                                />
+                                <input
+                                  type="text"
+                                  value={subtaskAssignee}
+                                  onChange={(e) => setSubtaskAssignee(e.target.value)}
+                                  placeholder="אחראי..."
+                                  className="w-28 px-2 py-1 text-xs border border-slate-300 rounded-lg bg-white"
+                                />
+                                <button
+                                  type="submit"
+                                  className="px-3 py-1 bg-slate-900 text-white text-xs font-semibold rounded-lg"
+                                >
+                                  שמור +
+                                </button>
+                              </div>
+                            </form>
+                          )}
+                        </div>
+
+                        {/* תתי-משימות רקורסיביות */}
+                        {children.map((child) => renderCompactTreeNode(child, depth + 1))}
+                      </div>
+                    );
+                  };
+
+                  return (
+                    <div key={rootTask.id} className="space-y-2">
+                      {renderCompactTreeNode(rootTask, 0)}
+                    </div>
+                  );
+                })}
+            </div>
+          ) : (
+            /* תצוגת טבלה מלאה */
+            <div className="bg-white border border-slate-300/90 rounded-xl overflow-hidden shadow-xs">
+              <div className="overflow-x-auto max-h-[720px]">
+                <table className="erp-table text-right">
+                  <thead>
+                    <tr className="text-xs font-semibold text-slate-700">
+                      <th className="py-3.5 px-4 col-compact">ביצוע</th>
+                      <th className="py-3.5 px-5 col-text-wide">עץ משימות ותתי-משימות (+ להוספה, מטרה ומבחן הצלחה)</th>
+                      <th className="py-3.5 px-4 min-w-[310px]">תאריך ביצוע למשימה ותזכורות (מייל/מחשב/דשבורד/נייד)</th>
+                      <th className="py-3.5 px-4 col-compact">משך (ימים)</th>
+                      <th className="py-3.5 px-4 col-text-medium">תלויות קודמות (DAG)</th>
+                      <th className="py-3.5 px-4 col-compact">המלצת התחלה ו-CPM</th>
+                      <th className="py-3.5 px-4 text-left col-compact">פעולות</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200/80 text-sm">
+                    {rootTasks.map((rootTask) => renderTaskTreeRows(rootTask, 0))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

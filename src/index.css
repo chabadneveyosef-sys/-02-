@@ -4,8 +4,12 @@
   body {
     font-family: 'Assistant', system-ui, -apple-system, sans-serif;
     direction: rtl;
-    background-color: #ece9e2;
-    color: #1e293b;
+    background-color: #e4eaf3;
+    background-image:
+      radial-gradient(at 0% 0%, rgba(56, 189, 248, 0.14) 0px, transparent 50%),
+      radial-gradient(at 100% 0%, rgba(245, 158, 11, 0.12) 0px, transparent 50%);
+    background-attachment: fixed;
+    color: #0f172a;
   }
 
   h1, h2, .font-display {
@@ -17,24 +21,32 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* Avoid blinding pure-white surfaces across the application for eye comfort */
+  /* Soft luminous surfaces — lively and vibrant without blinding pure white */
   .bg-white {
-    background-color: #f6f4ef !important;
+    background-color: #f4f7fb !important;
   }
 
   .bg-slate-50 {
-    background-color: #eeebe4 !important;
+    background-color: #eaf0f8 !important;
   }
 
   .bg-slate-100 {
-    background-color: #e4e0d7 !important;
+    background-color: #dce5f2 !important;
+  }
+
+  .bg-slate-900 {
+    background-color: #1e3a8a !important;
+  }
+
+  .hover\:bg-slate-800:hover {
+    background-color: #1d4ed8 !important;
   }
 
   input:not([type="checkbox"]):not([type="radio"]),
   select,
   textarea {
-    background-color: #f9f8f4;
-    border-color: #cbd5e1;
+    background-color: #f8fafd;
+    border-color: #94a3b8;
     transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
   }
 
@@ -42,9 +54,9 @@
   select:focus,
   textarea:focus {
     outline: none;
-    background-color: #fcfbf9;
-    border-color: #475569;
-    box-shadow: 0 0 0 3px rgba(71, 85, 105, 0.14);
+    background-color: #f4f7fb;
+    border-color: #2563eb;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
   }
 }
 
@@ -59,10 +71,10 @@
   position: sticky;
   top: 0;
   z-index: 10;
-  background-color: #e6e2d8;
-  color: #334155;
+  background-color: #d6e2f3;
+  color: #1e3a8a;
   font-weight: 700;
-  border-bottom: 1px solid #cbd5e1;
+  border-bottom: 2px solid #93c5fd;
   white-space: nowrap;
 }
 
@@ -71,11 +83,11 @@
 }
 
 .erp-table tbody tr:nth-child(even) {
-  background-color: rgba(235, 231, 222, 0.45);
+  background-color: rgba(219, 234, 254, 0.35);
 }
 
 .erp-table tbody tr:hover {
-  background-color: rgba(218, 212, 198, 0.55) !important;
+  background-color: rgba(191, 219, 254, 0.55) !important;
 }
 
 /* Text-heavy cells receive generous fixed/minimum width and comfortable line-height */
@@ -101,4 +113,108 @@
   font-family: 'Assistant', sans-serif !important;
   z-index: 10;
 }
+
+/* Personal Area Technical & Design Preferences (Theme Palettes, Font Scale, Density) */
+.theme-emerald_forest {
+  background-color: #e2f0ea !important;
+  background-image:
+    radial-gradient(at 0% 0%, rgba(16, 185, 129, 0.16) 0px, transparent 50%),
+    radial-gradient(at 100% 0%, rgba(245, 158, 11, 0.12) 0px, transparent 50%) !important;
+}
+.theme-emerald_forest .bg-slate-900 {
+  background-color: #065f46 !important;
+}
+.theme-emerald_forest .hover\:bg-slate-800:hover {
+  background-color: #047857 !important;
+}
+.theme-emerald_forest .erp-table thead th {
+  background-color: #d1fae5;
+  color: #065f46;
+  border-bottom-color: #6ee7b7;
+}
+
+.theme-warm_amber {
+  background-color: #f4ece1 !important;
+  background-image:
+    radial-gradient(at 0% 0%, rgba(245, 158, 11, 0.16) 0px, transparent 50%),
+    radial-gradient(at 100% 0%, rgba(217, 119, 6, 0.12) 0px, transparent 50%) !important;
+}
+.theme-warm_amber .bg-white {
+  background-color: #faf6f0 !important;
+}
+.theme-warm_amber .bg-slate-50 {
+  background-color: #f3ece2 !important;
+}
+.theme-warm_amber .bg-slate-900 {
+  background-color: #78350f !important;
+}
+.theme-warm_amber .hover\:bg-slate-800:hover {
+  background-color: #92400e !important;
+}
+.theme-warm_amber .erp-table thead th {
+  background-color: #fde68a;
+  color: #78350f;
+  border-bottom-color: #f59e0b;
+}
+
+.theme-deep_indigo {
+  background-color: #e6e6f5 !important;
+  background-image:
+    radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.18) 0px, transparent 50%),
+    radial-gradient(at 100% 0%, rgba(168, 85, 247, 0.12) 0px, transparent 50%) !important;
+}
+.theme-deep_indigo .bg-slate-900 {
+  background-color: #312e81 !important;
+}
+.theme-deep_indigo .hover\:bg-slate-800:hover {
+  background-color: #3730a3 !important;
+}
+.theme-deep_indigo .erp-table thead th {
+  background-color: #e0e7ff;
+  color: #312e81;
+  border-bottom-color: #818cf8;
+}
+
+.theme-dark_slate {
+  background-color: #cbd5e1 !important;
+  background-image:
+    radial-gradient(at 0% 0%, rgba(30, 41, 59, 0.16) 0px, transparent 50%),
+    radial-gradient(at 100% 0%, rgba(71, 85, 105, 0.16) 0px, transparent 50%) !important;
+}
+.theme-dark_slate .bg-white {
+  background-color: #e2e8f0 !important;
+}
+.theme-dark_slate .bg-slate-50 {
+  background-color: #d8e0ea !important;
+}
+.theme-dark_slate .bg-slate-900 {
+  background-color: #0f172a !important;
+}
+.theme-dark_slate .hover\:bg-slate-800:hover {
+  background-color: #1e293b !important;
+}
+
+/* Font Scale & UI Density */
+.font-scale-small {
+  font-size: 93%;
+}
+.font-scale-normal {
+  font-size: 100%;
+}
+.font-scale-large {
+  font-size: 108%;
+}
+
+.density-compact .erp-table td,
+.density-compact .erp-table th {
+  padding-top: 0.4rem !important;
+  padding-bottom: 0.4rem !important;
+}
+
+.density-spacious .erp-table td,
+.density-spacious .erp-table th {
+  padding-top: 1rem !important;
+  padding-bottom: 1rem !important;
+}
+
 

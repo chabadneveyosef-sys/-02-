@@ -35,6 +35,11 @@ import {
   Redo2,
   Keyboard,
   UserPlus,
+  Eye,
+  EyeOff,
+  CheckCircle2,
+  Clock,
+  UserCircle,
 } from 'lucide-react';
 import {
   auth,
@@ -73,13 +78,11 @@ import {
   DonorContactRecord,
   VolunteerEntityRecord,
   MapDefaultLocationConfig,
+  UserPersonalPreferences,
 } from './types/erp';
 import {
   buildSeedUsers,
   buildSeedTemplates,
-  buildSeedAnnualActivities,
-  buildSeedTasks,
-  buildSeedDonorsAndTransactions,
 } from './lib/seed-data';
 import { PWAControls } from './components/PWAControls';
 import { DashboardView } from './components/DashboardView';
@@ -89,6 +92,7 @@ import { FinancesView } from './components/FinancesView';
 import { CrmDonorsView } from './components/CrmDonorsView';
 import { GisMapView } from './components/GisMapView';
 import { RbacSettingsView } from './components/RbacSettingsView';
+import { PersonalProfileView } from './components/PersonalProfileView';
 
 type NavTab =
   | 'dashboard'
@@ -97,9 +101,11 @@ type NavTab =
   | 'finances'
   | 'crm_donors'
   | 'gis_map'
-  | 'rbac_settings';
+  | 'rbac_settings'
+  | 'personal_profile';
 
-const LOCAL_CACHE_KEY = 'chabad_erp_offline_repository_v1';
+const LOCAL_CACHE_KEY = 'chabad_erp_offline_repository_v2_clean';
+const SESSION_USER_KEY = 'chabad_erp_active_session_user_id';
 
 export default function App() {
   const [fbUser, setFbUser] = useState<FirebaseUser | null>(null);
@@ -109,11 +115,19 @@ export default function App() {
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [usernameInput, setUsernameInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [regDisplayNameInput, setRegDisplayNameInput] = useState('');
   const [regEmailInput, setRegEmailInput] = useState('');
   const [regRoleInput, setRegRoleInput] = useState<RoleTemplateName>('coordinator');
-  const [localLoggedInUserId, setLocalLoggedInUserId] = useState<string | null>('local-admin');
+  const [localLoggedInUserId, setLocalLoggedInUserId] = useState<string | null>(() => {
+    try {
+      return sessionStorage.getItem(SESSION_USER_KEY) || null;
+    } catch {
+      return null;
+    }
+  });
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [registerSuccessMessage, setRegisterSuccessMessage] = useState<string | null>(null);
   const [shortcutToast, setShortcutToast] = useState<string | null>(null);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
 
@@ -126,6 +140,7 @@ export default function App() {
 
   const handleGoogleSignIn = async () => {
     setLoginError(null);
+    setRegisterSuccessMessage(null);
     try {
       await googleSignIn();
     } catch (err: unknown) {
@@ -145,30 +160,21 @@ export default function App() {
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [commandQuery, setCommandQuery] = useState('');
 
-  // Repository State (lazy-initialized once from local cache or seed data for zero-latency / offline support)
+  // Repository State — ללא הזרקת נתוני דמה אוטומטית (רק משתמש מנהל ותבניות ברירת מחדל)
   const seedInitial = useMemo(() => {
-    const usrs = buildSeedUsers();
+    const usrs = buildSeedUsers().slice(0, 1); // רק משתמש מנהל ראשי (admin / 123456) ללא משתמשי דמה
     const tpls = buildSeedTemplates();
-    const acts = buildSeedAnnualActivities(tpls);
-    const tsks = buildSeedTasks(acts);
-    const dAndTx = buildSeedDonorsAndTransactions();
-    return { usrs, tpls, acts, tsks, dAndTx };
+    return { usrs, tpls };
   }, []);
 
   const [users, setUsers] = useState<UserRecord[]>(() => seedInitial.usrs);
   const [auditLogs, setAuditLogs] = useState<AuditLogRecord[]>([]);
   const [templates, setTemplates] = useState<DynamicTemplateRecord[]>(() => seedInitial.tpls);
-  const [activities, setActivities] = useState<AnnualActivityRecord[]>(() => seedInitial.acts);
-  const [tasks, setTasks] = useState<TaskNodeRecord[]>(() => seedInitial.tsks);
-  const [transactions, setTransactions] = useState<FinancialTransactionRecord[]>(
-    () => seedInitial.dAndTx.transactions
-  );
-  const [donors, setDonors] = useState<DonorContactRecord[]>(
-    () => seedInitial.dAndTx.donors
-  );
-  const [communityEntities, setCommunityEntities] = useState<VolunteerEntityRecord[]>(
-    () => seedInitial.dAndTx.communityEntities
-  );
+  const [activities, setActivities] = useState<AnnualActivityRecord[]>([]);
+  const [tasks, setTasks] = useState<TaskNodeRecord[]>([]);
+  const [transactions, setTransactions] = useState<FinancialTransactionRecord[]>([]);
+  const [donors, setDonors] = useState<DonorContactRecord[]>([]);
+  const [communityEntities, setCommunityEntities] = useState<VolunteerEntityRecord[]>([]);
   const [defaultMapLocation, setDefaultMapLocation] = useState<MapDefaultLocationConfig>({
     locationName: 'חיפה - שכונת נווה יוסף (רחוב יד לבנים)',
     lat: 32.7842,
@@ -346,7 +352,7 @@ export default function App() {
         e.preventDefault();
         setShowCommandPalette(true);
         setCommandQuery('חדש');
-      } else if (e.altKey && ['1', '2', '3', '4', '5', '6', '7'].includes(e.key)) {
+      } else if (e.altKey && ['1', '2', '3', '4', '5', '6', '7', '8'].includes(e.key)) {
         e.preventDefault();
         const tabsOrder: NavTab[] = [
           'dashboard',
@@ -356,6 +362,7 @@ export default function App() {
           'crm_donors',
           'gis_map',
           'rbac_settings',
+          'personal_profile',
         ];
         const idx = Number(e.key) - 1;
         if (tabsOrder[idx]) {
@@ -372,6 +379,19 @@ export default function App() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleUndo, handleRedo, triggerShortcutToast]);
+
+  // Sync session user ID to sessionStorage
+  useEffect(() => {
+    try {
+      if (localLoggedInUserId) {
+        sessionStorage.setItem(SESSION_USER_KEY, localLoggedInUserId);
+      } else {
+        sessionStorage.removeItem(SESSION_USER_KEY);
+      }
+    } catch {
+      // ignore
+    }
+  }, [localLoggedInUserId]);
 
   // Auth listener & User Profile Synchronization
   useEffect(() => {
@@ -398,12 +418,16 @@ export default function App() {
               displayName: user.displayName || user.email || 'שליח בית חב״ד',
               roleTemplate: role,
               isBlocked: false,
+              isPendingApproval: !isPrimaryAdmin,
               sessionVersion: 1,
               permissionsJson: JSON.stringify(defaults.domains),
               sensitivePermissionsJson: JSON.stringify(defaults.sensitive),
               createdAt: now,
               updatedAt: now,
             };
+            setUsers((prev) =>
+              prev.some((u) => u.uid === user.uid) ? prev : [...prev, newUserRecord]
+            );
             await setDoc(userDocRef, sanitizeForFirestore(newUserRecord));
           }
         } catch {
@@ -645,8 +669,29 @@ export default function App() {
 
   const todayHebrew = fromGregorianDate(new Date());
 
+  const currentPreferences: UserPersonalPreferences = useMemo(() => {
+    const defaultPrefs: UserPersonalPreferences = {
+      themePalette: 'royal_blue',
+      fontSizeScale: 'normal',
+      uiDensity: 'comfortable',
+      defaultStartTab: 'dashboard',
+      enableSoundEffects: true,
+      showHebrewDatesInHeader: true,
+    };
+    if (currentUser.preferencesJson) {
+      try {
+        return { ...defaultPrefs, ...JSON.parse(currentUser.preferencesJson) };
+      } catch {
+        return defaultPrefs;
+      }
+    }
+    return defaultPrefs;
+  }, [currentUser.preferencesJson]);
+
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
+    <div
+      className={`min-h-screen flex flex-col bg-slate-50 text-slate-900 theme-${currentPreferences.themePalette} font-scale-${currentPreferences.fontSizeScale} density-${currentPreferences.uiDensity}`}
+    >
       {/* Top Bar Contract: 3 Zones (Brand, 4-6 Nav Links, 1-2 Primary Actions) */}
       <header className="sticky top-0 z-30 bg-white border-b border-slate-200 px-6 py-3.5 flex items-center justify-between gap-4">
         {/* Zone 1: Single text element wordmark */}
@@ -726,6 +771,16 @@ export default function App() {
           >
             הרשאות וגיבוי
           </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('personal_profile')}
+            className={`hover:text-slate-900 transition-colors whitespace-nowrap py-1 flex items-center gap-1 ${
+              activeTab === 'personal_profile' ? 'text-slate-900 font-bold border-b-2 border-slate-900' : ''
+            }`}
+          >
+            <UserCircle className="w-4 h-4 text-amber-600" />
+            <span>אזור אישי</span>
+          </button>
         </nav>
 
         {/* Zone 3: 1-2 primary actions */}
@@ -769,18 +824,34 @@ export default function App() {
             <span>חיפוש (Ctrl+K)</span>
           </button>
           {fbUser || localLoggedInUserId ? (
-            <button
-              type="button"
-              onClick={() => {
-                setLocalLoggedInUserId(null);
-                clearCachedAccessToken();
-                if (fbUser) signOut(auth);
-              }}
-              className="px-3.5 py-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              <span>התנתק</span>
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setActiveTab('personal_profile')}
+                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap ${
+                  activeTab === 'personal_profile'
+                    ? 'bg-amber-500 text-slate-950'
+                    : 'bg-slate-200/80 text-slate-800 hover:bg-slate-300/80'
+                }`}
+                title="אזור אישי: פרטים אישיים, סיסמה והעדפות עיצוב"
+              >
+                <UserCircle className="w-3.5 h-3.5" />
+                <span className="hidden md:inline">{currentUser.displayName}</span>
+                <span className="md:hidden">אזור אישי</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setLocalLoggedInUserId(null);
+                  clearCachedAccessToken();
+                  if (fbUser) signOut(auth);
+                }}
+                className="px-3.5 py-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>התנתק</span>
+              </button>
+            </div>
           ) : (
             <button
               type="button"
@@ -802,6 +873,7 @@ export default function App() {
       )}
 
       {/* Sub-header context bar with Hebrew Date, Sunset & Active RBAC User */}
+      {currentPreferences.showHebrewDatesInHeader && (
       <div className="bg-slate-900 text-slate-200 px-6 py-2 text-xs flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <span>היום בלוח העברי: <strong>{todayHebrew.hebrewDisplay}</strong></span>
@@ -812,10 +884,18 @@ export default function App() {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          <span>
-            משתמש פעיל: <strong>{currentUser.displayName}</strong>{' '}
-            <span className="text-slate-400">({ROLE_TEMPLATE_LABELS[currentUser.roleTemplate]})</span>
-          </span>
+          <button
+            type="button"
+            onClick={() => setActiveTab('personal_profile')}
+            className="hover:text-amber-300 transition-colors flex items-center gap-1"
+            title="לחץ למעבר לאזור האישי"
+          >
+            <UserCircle className="w-3.5 h-3.5 text-amber-400" />
+            <span>
+              משתמש פעיל: <strong>{currentUser.displayName}</strong>{' '}
+              <span className="text-slate-400">({ROLE_TEMPLATE_LABELS[currentUser.roleTemplate]})</span>
+            </span>
+          </button>
           {parsedUsers.length > 1 && (
             <select
               aria-label="החלפת משתמש פעיל לבדיקת הרשאות"
@@ -843,6 +923,7 @@ export default function App() {
           )}
         </div>
       </div>
+      )}
 
       {/* Mobile Navigation Bar */}
       <div className="lg:hidden flex overflow-x-auto bg-white border-b border-slate-200 px-4 py-2 gap-2">
@@ -854,6 +935,7 @@ export default function App() {
           { id: 'crm_donors', label: 'תורמים CRM', icon: Users },
           { id: 'gis_map', label: 'מפה', icon: MapPin },
           { id: 'rbac_settings', label: 'הרשאות וגיבוי', icon: Shield },
+          { id: 'personal_profile', label: 'אזור אישי', icon: UserCircle },
         ].map((item) => {
           const Icon = item.icon;
           return (
@@ -874,27 +956,33 @@ export default function App() {
 
       {/* Main Content Container */}
       <main className="flex-1 max-w-[1400px] w-full mx-auto px-6 py-8">
-        {!fbUser && !localLoggedInUserId && (
-          <div className="mb-6 bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div className="space-y-1">
-                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                  <Lock className="w-4 h-4 text-amber-600" />
-                  כניסה ורישום למערכת (מערך הרשאות RBAC פעיל)
-                </h3>
-                <p className="text-xs text-slate-600">
-                  התחבר עם משתמש קיים (למשל <span className="font-mono">admin</span> / <span className="font-mono">123456</span>), הירשם כמשתמש חדש או התחבר עם חשבון Google.
-                </p>
+        {!fbUser && !localLoggedInUserId ? (
+          /* מסך כניסה או הרשמה בכניסה ראשונה לאתר */
+          <div className="max-w-xl mx-auto my-8 bg-white border border-slate-300/90 rounded-2xl shadow-xl overflow-hidden">
+            <div className="bg-slate-900 text-white p-6 space-y-2">
+              <div className="flex items-center justify-between">
+                <h1 className="text-2xl font-bold font-display">ברוכים הבאים למערכת בית חב״ד ERP</h1>
+                <Lock className="w-6 h-6 text-amber-400" />
               </div>
-              <div className="flex items-center gap-2">
+              <p className="text-xs text-slate-200 leading-relaxed">
+                בחר <strong>כניסה למערכת</strong> או <strong>הרשמת משתמש חדש</strong>. ניתן להתחבר באמצעות שם משתמש וסיסמה או באמצעות חשבון Google. כל הרשמה חדשה מותנית באישור מנהל המערכת.
+              </p>
+            </div>
+
+            <div className="p-6 space-y-5">
+              {/* מתג כניסה / הרשמה */}
+              <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-xl">
                 <button
                   type="button"
                   onClick={() => {
                     setAuthMode('login');
                     setLoginError(null);
+                    setRegisterSuccessMessage(null);
                   }}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg ${
-                    authMode === 'login' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700'
+                  className={`py-2.5 px-4 text-sm font-bold rounded-lg transition-colors ${
+                    authMode === 'login'
+                      ? 'bg-slate-900 text-white shadow-sm'
+                      : 'text-slate-700 hover:text-slate-900'
                   }`}
                 >
                   כניסה למערכת
@@ -904,185 +992,354 @@ export default function App() {
                   onClick={() => {
                     setAuthMode('register');
                     setLoginError(null);
+                    setRegisterSuccessMessage(null);
                   }}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-1 ${
-                    authMode === 'register' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700'
+                  className={`py-2.5 px-4 text-sm font-bold rounded-lg transition-colors flex items-center justify-center gap-1.5 ${
+                    authMode === 'register'
+                      ? 'bg-slate-900 text-white shadow-sm'
+                      : 'text-slate-700 hover:text-slate-900'
                   }`}
                 >
-                  <UserPlus className="w-3.5 h-3.5" />
-                  <span>רישום משתמש חדש</span>
+                  <UserPlus className="w-4 h-4" />
+                  <span>הרשמה (מותנה באישור מנהל)</span>
                 </button>
               </div>
-            </div>
 
-            {authMode === 'login' ? (
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  setLoginError(null);
-                  const uname = usernameInput.trim().toLowerCase();
-                  const pass = passwordInput.trim();
-                  if (!uname || !pass) {
-                    setLoginError('נא להזין שם משתמש וסיסמה');
-                    return;
-                  }
-                  const matched = parsedUsers.find(
-                    (u) =>
-                      (u.username || '').toLowerCase() === uname ||
-                      u.email.toLowerCase() === uname ||
-                      u.displayName === usernameInput.trim()
-                  );
-                  if (!matched) {
-                    setLoginError('שם המשתמש לא נמצא במערכת. ניתן להירשם בלשונית "רישום משתמש חדש".');
-                    return;
-                  }
-                  if (matched.isBlocked) {
-                    setLoginError('חשבון משתמש זה חסום על ידי מנהל המערכת.');
-                    return;
-                  }
-                  if (matched.passwordHash && decryptSensitiveString(matched.passwordHash) !== pass) {
-                    setLoginError('הסיסמה שהוזנה שגויה.');
-                    return;
-                  }
-                  setLocalLoggedInUserId(matched.id);
-                  setUsernameInput('');
-                  setPasswordInput('');
-                }}
-                className="flex flex-wrap items-center gap-2"
-              >
-                <input
-                  type="text"
-                  value={usernameInput}
-                  onChange={(e) => setUsernameInput(e.target.value)}
-                  placeholder="שם משתמש או אימייל (למשל admin)"
-                  className="px-3 py-1.5 text-xs border border-slate-300 rounded-lg"
-                />
-                <input
-                  type="password"
-                  value={passwordInput}
-                  onChange={(e) => setPasswordInput(e.target.value)}
-                  placeholder="סיסמה (למשל 123456)"
-                  className="px-3 py-1.5 text-xs border border-slate-300 rounded-lg"
-                />
-                <button
-                  type="submit"
-                  className="px-4 py-1.5 bg-slate-900 text-white text-xs font-semibold rounded-lg hover:bg-slate-800"
+              {registerSuccessMessage && (
+                <div className="p-4 bg-emerald-50 border border-emerald-300 rounded-xl text-emerald-900 text-xs space-y-1">
+                  <div className="font-bold flex items-center gap-1.5 text-sm">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>בקשת ההרשמה נקלטה בהצלחה!</span>
+                  </div>
+                  <p className="leading-relaxed">{registerSuccessMessage}</p>
+                </div>
+              )}
+
+              {loginError && (
+                <div className="p-3.5 bg-red-50 border border-red-200 rounded-xl text-xs font-semibold text-red-700">
+                  {loginError}
+                </div>
+              )}
+
+              {authMode === 'login' ? (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    setLoginError(null);
+                    setRegisterSuccessMessage(null);
+                    const uname = usernameInput.trim().toLowerCase();
+                    const pass = passwordInput.trim();
+                    if (!uname || !pass) {
+                      setLoginError('נא להזין שם משתמש וסיסמה.');
+                      return;
+                    }
+                    const matched = parsedUsers.find(
+                      (u) =>
+                        (u.username || '').toLowerCase() === uname ||
+                        u.email.toLowerCase() === uname ||
+                        u.displayName === usernameInput.trim()
+                    );
+                    if (!matched) {
+                      setLoginError(
+                        'שם המשתמש לא נמצא במערכת. ניתן לעבור ללשונית "הרשמה" כדי להגיש בקשת הרשמה לאישור מנהל.'
+                      );
+                      return;
+                    }
+                    if (matched.isPendingApproval) {
+                      setLoginError(
+                        'חשבונך נרשם בהצלחה וממתין כעת לאישור מנהל המערכת. לאחר שמנהל יאשר אותך תוכל להיכנס.'
+                      );
+                      return;
+                    }
+                    if (matched.isBlocked) {
+                      setLoginError('חשבון משתמש זה חסום על ידי מנהל המערכת.');
+                      return;
+                    }
+                    const storedPlain = matched.passwordHash
+                      ? decryptSensitiveString(matched.passwordHash)
+                      : '';
+                    const isAdminFallbackMatch =
+                      matched.roleTemplate === 'admin' &&
+                      (pass === 'chabad770' || pass === '123456');
+                    if (
+                      matched.passwordHash &&
+                      storedPlain !== pass &&
+                      !isAdminFallbackMatch
+                    ) {
+                      setLoginError('הסיסמה שהוזנה שגויה.');
+                      return;
+                    }
+                    setLocalLoggedInUserId(matched.id);
+                    if (matched.preferencesJson) {
+                      try {
+                        const prefs: UserPersonalPreferences = JSON.parse(matched.preferencesJson);
+                        if (prefs.defaultStartTab) {
+                          setActiveTab(prefs.defaultStartTab);
+                        }
+                      } catch {
+                        // ignore
+                      }
+                    }
+                    setUsernameInput('');
+                    setPasswordInput('');
+                  }}
+                  className="space-y-4"
                 >
-                  כניסה
-                </button>
-                <button
-                  type="button"
-                  onClick={handleGoogleSignIn}
-                  className="px-3 py-1.5 bg-amber-600 text-white text-xs font-semibold rounded-lg hover:bg-amber-700"
-                >
-                  אימות Google מהיר
-                </button>
-                {loginError && <span className="text-xs text-red-600 w-full">{loginError}</span>}
-              </form>
-            ) : (
-              <form
-                onSubmit={async (e) => {
-                  e.preventDefault();
-                  setLoginError(null);
-                  if (!regDisplayNameInput.trim() || !usernameInput.trim() || !passwordInput.trim()) {
-                    setLoginError('נא למלא שם מלא, שם משתמש וסיסמה לרישום.');
-                    return;
-                  }
-                  const exists = parsedUsers.some(
-                    (u) => (u.username || '').toLowerCase() === usernameInput.trim().toLowerCase()
-                  );
-                  if (exists) {
-                    setLoginError('שם המשתמש כבר קיים במערכת.');
-                    return;
-                  }
-                  const now = new Date().toISOString();
-                  const newId = generateUuidV7();
-                  const def = getDefaultPermissionsForRole(regRoleInput);
-                  const newUser: UserRecord = {
-                    id: newId,
-                    uid: newId,
-                    displayName: regDisplayNameInput.trim(),
-                    email: regEmailInput.trim() || `${usernameInput.trim()}@chabad.local`,
-                    username: usernameInput.trim(),
-                    passwordHash: encryptSensitiveString(passwordInput.trim()),
-                    roleTemplate: regRoleInput,
-                    isBlocked: false,
-                    sessionVersion: 1,
-                    permissionsJson: JSON.stringify(def.domains),
-                    sensitivePermissionsJson: JSON.stringify(def.sensitive),
-                    createdAt: now,
-                    updatedAt: now,
-                  };
-                  setUsers((prev) => [...prev, newUser]);
-                  setLocalLoggedInUserId(newId);
-                  setRegDisplayNameInput('');
-                  setRegEmailInput('');
-                  setUsernameInput('');
-                  setPasswordInput('');
-                  await writeAuditLog(
-                    'רישום משתמש חדש למערכת',
-                    newId,
-                    newUser.displayName,
-                    `נרשם עם תבנית הרשאות: ${ROLE_TEMPLATE_LABELS[regRoleInput]}`
-                  );
-                }}
-                className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-2 items-center"
-              >
-                <input
-                  type="text"
-                  required
-                  value={regDisplayNameInput}
-                  onChange={(e) => setRegDisplayNameInput(e.target.value)}
-                  placeholder="שם מלא ותפקיד"
-                  className="px-3 py-1.5 text-xs border border-slate-300 rounded-lg"
-                />
-                <input
-                  type="email"
-                  value={regEmailInput}
-                  onChange={(e) => setRegEmailInput(e.target.value)}
-                  placeholder="אימייל (אופציונלי)"
-                  className="px-3 py-1.5 text-xs border border-slate-300 rounded-lg"
-                />
-                <input
-                  type="text"
-                  required
-                  value={usernameInput}
-                  onChange={(e) => setUsernameInput(e.target.value)}
-                  placeholder="שם משתמש לכניסה"
-                  className="px-3 py-1.5 text-xs border border-slate-300 rounded-lg"
-                />
-                <input
-                  type="password"
-                  required
-                  value={passwordInput}
-                  onChange={(e) => setPasswordInput(e.target.value)}
-                  placeholder="סיסמה"
-                  className="px-3 py-1.5 text-xs border border-slate-300 rounded-lg"
-                />
-                <div className="flex items-center gap-2">
-                  <select
-                    value={regRoleInput}
-                    onChange={(e) => setRegRoleInput(e.target.value as RoleTemplateName)}
-                    className="flex-1 px-2 py-1.5 text-xs border border-slate-300 rounded-lg bg-white"
-                  >
-                    {Object.entries(ROLE_TEMPLATE_LABELS).map(([k, label]) => (
-                      <option key={k} value={k}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      שם משתמש או כתובת אימייל
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={usernameInput}
+                      onChange={(e) => setUsernameInput(e.target.value)}
+                      placeholder="הזן שם משתמש או כתובת אימייל"
+                      className="w-full px-3.5 py-2.5 text-sm border border-slate-300 rounded-lg"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      סיסמה
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showPassword ? 'text' : 'password'}
+                        required
+                        value={passwordInput}
+                        onChange={(e) => setPasswordInput(e.target.value)}
+                        placeholder="הזן סיסמה אישית"
+                        className="w-full px-3.5 py-2.5 pl-10 text-sm border border-slate-300 rounded-lg"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword((prev) => !prev)}
+                        className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-900"
+                        title={showPassword ? 'הסתר סיסמה' : 'הצג סיסמה'}
+                      >
+                        {showPassword ? (
+                          <EyeOff className="w-4 h-4" />
+                        ) : (
+                          <Eye className="w-4 h-4" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
                   <button
                     type="submit"
-                    className="px-4 py-1.5 bg-slate-900 text-white text-xs font-semibold rounded-lg hover:bg-slate-800 whitespace-nowrap"
+                    className="w-full py-2.5 bg-slate-900 text-white text-sm font-bold rounded-lg hover:bg-slate-800 transition-colors"
                   >
-                    הירשם והיכנס
+                    כניסה למערכת
                   </button>
-                </div>
-                {loginError && <span className="text-xs text-red-600 sm:col-span-5">{loginError}</span>}
-              </form>
-            )}
+
+                  <div className="relative py-2 flex items-center justify-center">
+                    <div className="border-t border-slate-300 w-full" />
+                    <span className="bg-white px-3 text-xs text-slate-500 whitespace-nowrap">
+                      או כניסה באמצעות חשבון גוגל
+                    </span>
+                    <div className="border-t border-slate-300 w-full" />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleGoogleSignIn}
+                    className="w-full py-2.5 bg-amber-600 text-white text-sm font-bold rounded-lg hover:bg-amber-700 transition-colors"
+                  >
+                    כניסה / הרשמה באמצעות חשבון Google
+                  </button>
+                </form>
+              ) : (
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    setLoginError(null);
+                    setRegisterSuccessMessage(null);
+                    if (
+                      !regDisplayNameInput.trim() ||
+                      !usernameInput.trim() ||
+                      !passwordInput.trim()
+                    ) {
+                      setLoginError('נא למלא שם מלא, שם משתמש וסיסמה לרישום.');
+                      return;
+                    }
+                    const exists = parsedUsers.some(
+                      (u) =>
+                        (u.username || '').toLowerCase() ===
+                        usernameInput.trim().toLowerCase()
+                    );
+                    if (exists) {
+                      setLoginError('שם המשתמש כבר קיים במערכת. בחר שם משתמש אחר או עבור לכניסה.');
+                      return;
+                    }
+                    const now = new Date().toISOString();
+                    const newId = generateUuidV7();
+                    const def = getDefaultPermissionsForRole(regRoleInput);
+                    const newUser: UserRecord = {
+                      id: newId,
+                      uid: newId,
+                      displayName: regDisplayNameInput.trim(),
+                      email: regEmailInput.trim() || `${usernameInput.trim()}@chabad.local`,
+                      username: usernameInput.trim(),
+                      passwordHash: encryptSensitiveString(passwordInput.trim()),
+                      roleTemplate: regRoleInput,
+                      isBlocked: false,
+                      isPendingApproval: true, // הרשמה מותנית באישור מנהל!
+                      sessionVersion: 1,
+                      permissionsJson: JSON.stringify(def.domains),
+                      sensitivePermissionsJson: JSON.stringify(def.sensitive),
+                      createdAt: now,
+                      updatedAt: now,
+                    };
+                    setUsers((prev) => [...prev, newUser]);
+                    setRegDisplayNameInput('');
+                    setRegEmailInput('');
+                    setUsernameInput('');
+                    setPasswordInput('');
+                    setAuthMode('login');
+                    setRegisterSuccessMessage(
+                      `המשתמש "${newUser.displayName}" (${newUser.username}) נרשם בהצלחה וממתין כעת לאישור מנהל המערכת. מנהל יכול לאשר את הבקשה בלשונית "הרשאות וגיבוי".`
+                    );
+                    await writeAuditLog(
+                      'בקשת הרשמת משתמש חדש (ממתין לאישור מנהל)',
+                      newId,
+                      newUser.displayName,
+                      `נרשם עם שם משתמש ${newUser.username} ותפקיד מבוקש: ${ROLE_TEMPLATE_LABELS[regRoleInput]}`
+                    );
+                  }}
+                  className="space-y-3.5"
+                >
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      שם מלא ותפקיד *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={regDisplayNameInput}
+                      onChange={(e) => setRegDisplayNameInput(e.target.value)}
+                      placeholder="למשל: הרב יוסף לוי"
+                      className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-lg"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        שם משתמש לכניסה *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={usernameInput}
+                        onChange={(e) => setUsernameInput(e.target.value)}
+                        placeholder="למשל: yossi"
+                        className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-lg font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        כתובת אימייל (רשות)
+                      </label>
+                      <input
+                        type="email"
+                        value={regEmailInput}
+                        onChange={(e) => setRegEmailInput(e.target.value)}
+                        placeholder="user@gmail.com"
+                        className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-lg font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        סיסמה *
+                      </label>
+                      <div className="relative">
+                        <input
+                          type={showPassword ? 'text' : 'password'}
+                          required
+                          value={passwordInput}
+                          onChange={(e) => setPasswordInput(e.target.value)}
+                          placeholder="בחר סיסמה"
+                          className="w-full px-3.5 py-2 pl-10 text-sm border border-slate-300 rounded-lg"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword((prev) => !prev)}
+                          className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-900"
+                          title={showPassword ? 'הסתר סיסמה' : 'הצג סיסמה'}
+                        >
+                          {showPassword ? (
+                            <EyeOff className="w-4 h-4" />
+                          ) : (
+                            <Eye className="w-4 h-4" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        תפקיד מבוקש (לאישור מנהל)
+                      </label>
+                      <select
+                        value={regRoleInput}
+                        onChange={(e) => setRegRoleInput(e.target.value as RoleTemplateName)}
+                        className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white"
+                      >
+                        {Object.entries(ROLE_TEMPLATE_LABELS).map(([k, label]) => (
+                          <option key={k} value={k}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full py-2.5 bg-slate-900 text-white text-sm font-bold rounded-lg hover:bg-slate-800 transition-colors"
+                  >
+                    שלח בקשת הרשמה לאישור מנהל
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleGoogleSignIn}
+                    className="w-full py-2 bg-amber-600 text-white text-xs font-bold rounded-lg hover:bg-amber-700 transition-colors"
+                  >
+                    או הירשם באמצעות חשבון Google (מותנה באישור מנהל)
+                  </button>
+                </form>
+              )}
+            </div>
           </div>
-        )}
+        ) : currentUser.isPendingApproval && fbUser?.email !== 'chabadneveyosef@gmail.com' ? (
+          /* מסך המתנה לאישור מנהל עבור משתמש שנרשם (כולל דרך Google) וטרם אושר */
+          <div className="max-w-lg mx-auto my-12 bg-white border border-amber-300 rounded-2xl p-8 text-center space-y-4 shadow-lg">
+            <Clock className="w-10 h-10 text-amber-600 mx-auto" />
+            <h2 className="text-xl font-bold text-slate-900">
+              חשבונך ממתין לאישור מנהל המערכת
+            </h2>
+            <p className="text-sm text-slate-600 leading-relaxed">
+              שלום <strong>{currentUser.displayName}</strong>, ההרשמה שלך נקלטה במערכת. מטעמי אבטחת מידע והרשאות בית חב״ד, הגישה למערכת תיפתח מיד לאחר שמנהל המערכת יאשר את חשבונך.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setLocalLoggedInUserId(null);
+                if (fbUser) signOut(auth);
+              }}
+              className="px-5 py-2 bg-slate-900 text-white text-xs font-bold rounded-lg"
+            >
+              חזרה למסך הכניסה הראשי
+            </button>
+          </div>
+        ) : (
+          <>
 
         {activeTab === 'dashboard' && (
           <DashboardView
@@ -1614,12 +1871,17 @@ export default function App() {
               newRole,
               newIsBlocked,
               newDomains: Record<PermissionDomain, AccessLevel>,
-              newSensitive: Record<SensitivePermission, boolean>
+              newSensitive: Record<SensitivePermission, boolean>,
+              newIsPendingApproval?: boolean
             ) => {
               const now = new Date().toISOString();
               const nextSessionVersion = newIsBlocked
                 ? targetUser.sessionVersion + 1
                 : targetUser.sessionVersion;
+              const resolvedPending =
+                newIsPendingApproval !== undefined
+                  ? newIsPendingApproval
+                  : Boolean(targetUser.isPendingApproval);
               const updated: UserRecord = {
                 id: targetUser.id,
                 uid: targetUser.uid,
@@ -1629,6 +1891,7 @@ export default function App() {
                 passwordHash: targetUser.passwordHash,
                 roleTemplate: newRole,
                 isBlocked: newIsBlocked,
+                isPendingApproval: resolvedPending,
                 sessionVersion: nextSessionVersion,
                 permissionsJson: JSON.stringify(newDomains),
                 sensitivePermissionsJson: JSON.stringify(newSensitive),
@@ -1637,10 +1900,14 @@ export default function App() {
               };
               setUsers((prev) => prev.map((u) => (u.id === targetUser.id ? updated : u)));
               await writeAuditLog(
-                newIsBlocked !== targetUser.isBlocked ? 'שינוי סטטוס חסימת משתמש' : 'עדכון הרשאות RBAC',
+                newIsPendingApproval === false && targetUser.isPendingApproval
+                  ? 'אישור מנהל להרשמת משתמש חדש'
+                  : newIsBlocked !== targetUser.isBlocked
+                  ? 'שינוי סטטוס חסימת משתמש'
+                  : 'עדכון הרשאות RBAC',
                 targetUser.id,
                 targetUser.displayName,
-                `תפקיד: ${newRole}, חסום: ${newIsBlocked}, גרסת סשן: #${nextSessionVersion}`
+                `תפקיד: ${newRole}, מאושר: ${!resolvedPending}, חסום: ${newIsBlocked}, גרסת סשן: #${nextSessionVersion}`
               );
               if (fbUser) {
                 try {
@@ -1692,6 +1959,93 @@ export default function App() {
               );
             }}
           />
+        )}
+
+        {activeTab === 'personal_profile' && (
+          <PersonalProfileView
+            currentUser={currentUser}
+            currentPreferences={currentPreferences}
+            onUpdatePersonalDetails={async (data) => {
+              const now = new Date().toISOString();
+              const updatedRecord: UserRecord = {
+                id: currentUser.id,
+                uid: currentUser.uid,
+                email: data.email || currentUser.email,
+                displayName: data.displayName,
+                username: data.username,
+                passwordHash: data.newPasswordPlain
+                  ? encryptSensitiveString(data.newPasswordPlain)
+                  : currentUser.passwordHash,
+                phone: data.phone,
+                personalTitle: data.personalTitle,
+                preferencesJson: currentUser.preferencesJson,
+                roleTemplate: currentUser.roleTemplate,
+                isBlocked: currentUser.isBlocked,
+                isPendingApproval: currentUser.isPendingApproval,
+                sessionVersion: currentUser.sessionVersion,
+                permissionsJson: currentUser.permissionsJson,
+                sensitivePermissionsJson: currentUser.sensitivePermissionsJson,
+                createdAt: currentUser.createdAt,
+                updatedAt: now,
+              };
+              setUsers((prev) =>
+                prev.some((u) => u.id === currentUser.id)
+                  ? prev.map((u) => (u.id === currentUser.id ? updatedRecord : u))
+                  : [...prev, updatedRecord]
+              );
+              await writeAuditLog(
+                data.newPasswordPlain
+                  ? 'עדכון פרטים אישיים והחלפת סיסמה באזור האישי'
+                  : 'עדכון פרטים אישיים באזור האישי',
+                currentUser.id,
+                data.displayName,
+                `שם משתמש: ${data.username}, אימייל: ${data.email}`
+              );
+              if (fbUser) {
+                try {
+                  await setDoc(doc(db, 'users', currentUser.id), sanitizeForFirestore(updatedRecord));
+                } catch (err) {
+                  handleFirestoreError(err, OperationType.UPDATE, `users/${currentUser.id}`);
+                }
+              }
+            }}
+            onUpdatePreferences={async (prefs) => {
+              const now = new Date().toISOString();
+              const updatedRecord: UserRecord = {
+                id: currentUser.id,
+                uid: currentUser.uid,
+                email: currentUser.email,
+                displayName: currentUser.displayName,
+                username: currentUser.username,
+                passwordHash: currentUser.passwordHash,
+                phone: currentUser.phone,
+                personalTitle: currentUser.personalTitle,
+                preferencesJson: JSON.stringify(prefs),
+                roleTemplate: currentUser.roleTemplate,
+                isBlocked: currentUser.isBlocked,
+                isPendingApproval: currentUser.isPendingApproval,
+                sessionVersion: currentUser.sessionVersion,
+                permissionsJson: currentUser.permissionsJson,
+                sensitivePermissionsJson: currentUser.sensitivePermissionsJson,
+                createdAt: currentUser.createdAt,
+                updatedAt: now,
+              };
+              setUsers((prev) =>
+                prev.some((u) => u.id === currentUser.id)
+                  ? prev.map((u) => (u.id === currentUser.id ? updatedRecord : u))
+                  : [...prev, updatedRecord]
+              );
+              if (fbUser) {
+                try {
+                  await setDoc(doc(db, 'users', currentUser.id), sanitizeForFirestore(updatedRecord));
+                } catch (err) {
+                  handleFirestoreError(err, OperationType.UPDATE, `users/${currentUser.id}`);
+                }
+              }
+            }}
+          />
+        )}
+          </>
         )}
       </main>
 

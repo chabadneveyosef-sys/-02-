@@ -12,14 +12,34 @@ export interface BaseEntity {
   deletedAt?: string; // Soft Delete ISO 8601
 }
 
+export interface UserPersonalPreferences {
+  themePalette: 'royal_blue' | 'emerald_forest' | 'warm_amber' | 'deep_indigo' | 'dark_slate';
+  fontSizeScale: 'small' | 'normal' | 'large';
+  uiDensity: 'compact' | 'comfortable' | 'spacious';
+  defaultStartTab:
+    | 'dashboard'
+    | 'annual_plan'
+    | 'tasks_dag'
+    | 'finances'
+    | 'crm_donors'
+    | 'gis_map'
+    | 'rbac_settings';
+  enableSoundEffects: boolean;
+  showHebrewDatesInHeader: boolean;
+}
+
 export interface UserRecord extends BaseEntity {
   uid: string;
   email: string;
   displayName: string;
   username?: string;
   passwordHash?: string;
+  phone?: string;
+  personalTitle?: string;
+  preferencesJson?: string;         // JSON of UserPersonalPreferences
   roleTemplate: RoleTemplateName;
   isBlocked: boolean;
+  isPendingApproval?: boolean;      // ממתין לאישור מנהל בעת הרשמה חדשה
   sessionVersion: number;
   permissionsJson: string;          // JSON of DomainPermissionsMap
   sensitivePermissionsJson: string; // JSON of SensitivePermissionsMap

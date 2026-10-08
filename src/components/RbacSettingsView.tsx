@@ -14,6 +14,11 @@ import {
   UserPlus,
   UserCheck,
   MapPin,
+  Eye,
+  EyeOff,
+  ChevronDown,
+  ChevronUp,
+  Clock,
 } from 'lucide-react';
 import {
   ParsedUserRecord,
@@ -69,7 +74,8 @@ interface RbacSettingsViewProps {
     newRole: RoleTemplateName,
     newIsBlocked: boolean,
     newDomains: Record<PermissionDomain, AccessLevel>,
-    newSensitive: Record<SensitivePermission, boolean>
+    newSensitive: Record<SensitivePermission, boolean>,
+    newIsPendingApproval?: boolean
   ) => Promise<void>;
   onSaveTemplate: (
     name: string,
@@ -116,7 +122,11 @@ export const RbacSettingsView: React.FC<RbacSettingsViewProps> = ({
   const [regEmail, setRegEmail] = useState('');
   const [regUsername, setRegUsername] = useState('');
   const [regPassword, setRegPassword] = useState('');
+  const [showRegPassword, setShowRegPassword] = useState(false);
   const [regRole, setRegRole] = useState<RoleTemplateName>('coordinator');
+
+  // Closed user list state — only opens for editing permissions when admin clicks a person
+  const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
 
   // Map Default Location quick editor inside settings
   const [mapLocName, setMapLocName] = useState(defaultMapLocation.locationName);
@@ -497,14 +507,24 @@ export const RbacSettingsView: React.FC<RbacSettingsViewProps> = ({
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     סיסמה ראשונית *
                   </label>
-                  <input
-                    type="password"
-                    required
-                    value={regPassword}
-                    onChange={(e) => setRegPassword(e.target.value)}
-                    placeholder="לפחות 4 תווים"
-                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg font-mono"
-                  />
+                  <div className="relative">
+                    <input
+                      type={showRegPassword ? 'text' : 'password'}
+                      required
+                      value={regPassword}
+                      onChange={(e) => setRegPassword(e.target.value)}
+                      placeholder="לפחות 4 תווים"
+                      className="w-full px-3 py-2 pl-9 text-xs border border-slate-300 rounded-lg font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowRegPassword((p) => !p)}
+                      className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-900"
+                      title={showRegPassword ? 'הסתר סיסמה' : 'הצג סיסמה'}
+                    >
+                      {showRegPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -554,153 +574,266 @@ export const RbacSettingsView: React.FC<RbacSettingsViewProps> = ({
             </form>
           )}
 
-          {users
-            .filter((u) => !u.deletedAt)
-            .map((user) => {
-              const isCurrentActive = user.id === currentUser.id || user.uid === currentUser.uid;
-              return (
-                <div
-                  key={user.id}
-                  className={`bg-white border rounded-xl p-6 space-y-4 ${
-                    isCurrentActive ? 'border-slate-900' : 'border-slate-200'
-                  }`}
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4">
-                    <div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Shield className="w-4 h-4 text-slate-800" />
-                        <span className="font-bold text-base text-slate-900">{user.displayName}</span>
+          {/* רשימת אנשים להרשאות — רשימה סגורה, ורק כשמנהל לוחץ על איש הוא נפתח לעריכת הרשאות */}
+          <div className="bg-white border border-slate-300/80 rounded-xl p-4 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900">
+                רשימת אנשים ומורשים במערכת (רשימה סגורה — לחץ על שם משתמש לפתיחת עריכת הרשאות)
+              </h3>
+              <p className="text-xs text-slate-600">
+                כל הרשאות המשתמשים סגורות כברירת מחדל לשמירה על ניקיון וסדר. לחיצה של מנהל על שורת משתמש תפתח את מטריצת ההרשאות המלאה שלו.
+              </p>
+            </div>
+            {users.some((u) => !u.deletedAt && u.isPendingApproval) && (
+              <span className="text-xs font-bold text-amber-800 bg-amber-100 border border-amber-300 px-3 py-1 rounded-lg flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5" />
+                ממתינים לאישור מנהל: {users.filter((u) => !u.deletedAt && u.isPendingApproval).length}
+              </span>
+            )}
+          </div>
+
+          <div className="space-y-3">
+            {users
+              .filter((u) => !u.deletedAt)
+              .map((user) => {
+                const isCurrentActive = user.id === currentUser.id || user.uid === currentUser.uid;
+                const isExpanded = expandedUserId === user.id;
+                return (
+                  <div
+                    key={user.id}
+                    className={`bg-white border rounded-xl overflow-hidden transition-colors ${
+                      user.isPendingApproval
+                        ? 'border-amber-400'
+                        : isCurrentActive
+                        ? 'border-blue-700'
+                        : 'border-slate-300/90'
+                    }`}
+                  >
+                    {/* שורת כותרת סגורה — לחיצה של מנהל פותחת/סוגרת את עריכת ההרשאות */}
+                    <div
+                      onClick={() => {
+                        if (canManageUsers) {
+                          setExpandedUserId((prev) => (prev === user.id ? null : user.id));
+                        }
+                      }}
+                      className={`p-4 flex flex-wrap items-center justify-between gap-4 ${
+                        canManageUsers ? 'cursor-pointer hover:bg-slate-100/70' : ''
+                      }`}
+                    >
+                      <div className="flex flex-wrap items-center gap-2.5">
+                        <Shield className="w-4 h-4 text-blue-900 shrink-0" />
+                        <span className="font-bold text-base text-slate-900">
+                          {user.displayName}
+                        </span>
+                        <span className="text-xs text-slate-600 font-semibold">
+                          · {ROLE_TEMPLATE_LABELS[user.roleTemplate]}
+                        </span>
                         <span className="text-xs text-slate-500 font-mono">({user.email})</span>
                         {user.username && (
                           <span className="text-xs text-slate-600 font-mono">
-                            · שם משתמש: <strong>{user.username}</strong>
+                            · משתמש: <strong>{user.username}</strong>
                           </span>
                         )}
                         {isCurrentActive && (
-                          <span className="text-xs font-bold text-emerald-700">
-                            · מחובר כעת
+                          <span className="text-xs font-bold text-emerald-700">· מחובר כעת</span>
+                        )}
+                        {user.isPendingApproval && (
+                          <span className="text-xs font-bold text-amber-800 flex items-center gap-1">
+                            · <Clock className="w-3.5 h-3.5" /> ממתין לאישור מנהל
                           </span>
                         )}
-                      </div>
-                      <div className="text-xs text-slate-500 mt-1 font-mono">
-                        UUIDv7: {user.id} · גרסת סשן פעיל: #{user.sessionVersion}
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-3">
-                      {onSwitchActiveUser && !isCurrentActive && !user.isBlocked && (
-                        <button
-                          type="button"
-                          onClick={() => onSwitchActiveUser(user.id)}
-                          className="px-3 py-1.5 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-900 rounded-lg flex items-center gap-1.5"
-                          title="עבור לעבוד תחת משתמש זה כדי לבדוק את הרשאותיו בזמן אמת"
-                        >
-                          <UserCheck className="w-3.5 h-3.5" />
-                          <span>הפעל כמשתמש פעיל</span>
-                        </button>
-                      )}
-
-                      <div>
-                        <label className="block text-[11px] text-slate-500 mb-0.5">תבנית תפקיד (נקודת מוצא):</label>
-                        <select
-                          disabled={!canManageUsers}
-                          value={user.roleTemplate}
-                          onChange={(e) =>
-                            handleRoleTemplateSelect(user, e.target.value as RoleTemplateName)
-                          }
-                          className="px-3 py-1.5 text-xs border border-slate-300 rounded-lg bg-white font-semibold"
-                        >
-                          {(Object.keys(ROLE_TEMPLATE_LABELS) as RoleTemplateName[]).map((r) => (
-                            <option key={r} value={r}>
-                              {ROLE_TEMPLATE_LABELS[r]}
-                            </option>
-                          ))}
-                        </select>
+                        {user.isBlocked && !user.isPendingApproval && (
+                          <span className="text-xs font-bold text-red-700">· חסום</span>
+                        )}
                       </div>
 
-                      {canManageUsers && (
-                        <button
-                          type="button"
-                          onClick={() => handleToggleBlockUser(user)}
-                          className={`px-3 py-2 text-xs font-semibold rounded-lg flex items-center gap-1.5 ${
-                            user.isBlocked
-                              ? 'bg-emerald-700 text-white hover:bg-emerald-800'
-                              : 'bg-red-50 text-red-700 border border-red-200 hover:bg-red-100'
-                          }`}
-                        >
-                          {user.isBlocked ? (
-                            <>
-                              <Unlock className="w-3.5 h-3.5" />
-                              בטל חסימת משתמש
-                            </>
-                          ) : (
-                            <>
-                              <Lock className="w-3.5 h-3.5" />
-                              חסום ונתק סשנים פעילים
-                            </>
+                      <div
+                        className="flex flex-wrap items-center gap-2"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {canManageUsers && user.isPendingApproval && (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              await onUpdateUserRoleAndPermissions(
+                                user,
+                                user.roleTemplate,
+                                false,
+                                user.permissions,
+                                user.sensitivePermissions,
+                                false
+                              );
+                              setBackupMessage(
+                                `הרשמת המשתמש "${user.displayName}" אושרה על ידי מנהל המערכת וכעת הוא רשאי להיכנס.`
+                              );
+                            }}
+                            className="px-3 py-1.5 text-xs font-bold bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg flex items-center gap-1.5"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            <span>אשר הרשמת משתמש</span>
+                          </button>
+                        )}
+
+                        {onSwitchActiveUser &&
+                          !isCurrentActive &&
+                          !user.isBlocked &&
+                          !user.isPendingApproval && (
+                            <button
+                              type="button"
+                              onClick={() => onSwitchActiveUser(user.id)}
+                              className="px-3 py-1.5 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-900 rounded-lg flex items-center gap-1.5"
+                              title="עבור לעבוד תחת משתמש זה כדי לבדוק את הרשאותיו בזמן אמת"
+                            >
+                              <UserCheck className="w-3.5 h-3.5" />
+                              <span>הפעל כמשתמש פעיל</span>
+                            </button>
                           )}
-                        </button>
-                      )}
-                    </div>
-                  </div>
 
-                  {/* 8 Domain Permissions Grid */}
-                  <div>
-                    <h4 className="text-xs font-bold text-slate-700 mb-2">
-                      הרשאות גרנולאריות לפי תחום (4 רמות גישה לכל תחום):
-                    </h4>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                      {(Object.keys(PERMISSION_DOMAIN_LABELS) as PermissionDomain[]).map((dom) => (
-                        <div key={dom} className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
-                          <label className="block text-xs font-semibold text-slate-800 mb-1">
-                            {PERMISSION_DOMAIN_LABELS[dom]}
-                          </label>
-                          <select
-                            disabled={!canManageUsers}
-                            value={user.permissions[dom] || 'none'}
-                            onChange={(e) =>
-                              handleDomainLevelChange(user, dom, e.target.value as AccessLevel)
+                        {canManageUsers && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedUserId((prev) => (prev === user.id ? null : user.id))
                             }
-                            className="w-full px-2 py-1 text-xs border border-slate-300 rounded bg-white"
+                            className="px-3 py-1.5 text-xs font-semibold bg-slate-900 text-white rounded-lg flex items-center gap-1.5"
                           >
-                            {(Object.keys(ACCESS_LEVEL_LABELS) as AccessLevel[]).map((lvl) => (
-                              <option key={lvl} value={lvl}>
-                                {ACCESS_LEVEL_LABELS[lvl]}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      ))}
+                            <span>{isExpanded ? 'סגור עריכת הרשאות' : 'ערוך הרשאות'}</span>
+                            {isExpanded ? (
+                              <ChevronUp className="w-3.5 h-3.5" />
+                            ) : (
+                              <ChevronDown className="w-3.5 h-3.5" />
+                            )}
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  </div>
 
-                  {/* 4 Sensitive Permissions */}
-                  <div className="pt-2 border-t border-slate-100">
-                    <h4 className="text-xs font-bold text-slate-700 mb-2">
-                      הרשאות נפרדות לפעולות רגישות:
-                    </h4>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                      {(Object.keys(SENSITIVE_PERMISSION_LABELS) as SensitivePermission[]).map(
-                        (perm) => (
-                          <label
-                            key={perm}
-                            className="flex items-center gap-2 p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-800 cursor-pointer"
-                          >
-                            <input
-                              type="checkbox"
-                              disabled={!canManageUsers}
-                              checked={Boolean(user.sensitivePermissions[perm])}
-                              onChange={() => handleSensitiveToggle(user, perm)}
-                            />
-                            <span>{SENSITIVE_PERMISSION_LABELS[perm]}</span>
-                          </label>
-                        )
-                      )}
-                    </div>
+                    {/* פאנל עריכת הרשאות נפתח רק כאשר מנהל לוחץ על האיש */}
+                    {isExpanded && canManageUsers && (
+                      <div className="p-6 pt-4 border-t border-slate-200 bg-slate-50/70 space-y-5">
+                        <div className="flex flex-wrap items-center justify-between gap-4 pb-3 border-b border-slate-200">
+                          <div className="text-xs text-slate-500 font-mono">
+                            UUIDv7: {user.id} · גרסת סשן פעיל: #{user.sessionVersion}
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-3">
+                            <div>
+                              <label className="block text-[11px] text-slate-600 mb-0.5 font-semibold">
+                                תבנית תפקיד (נקודת מוצא):
+                              </label>
+                              <select
+                                disabled={!canManageUsers}
+                                value={user.roleTemplate}
+                                onChange={(e) =>
+                                  handleRoleTemplateSelect(user, e.target.value as RoleTemplateName)
+                                }
+                                className="px-3 py-1.5 text-xs border border-slate-300 rounded-lg bg-white font-semibold"
+                              >
+                                {(Object.keys(ROLE_TEMPLATE_LABELS) as RoleTemplateName[]).map(
+                                  (r) => (
+                                    <option key={r} value={r}>
+                                      {ROLE_TEMPLATE_LABELS[r]}
+                                    </option>
+                                  )
+                                )}
+                              </select>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => handleToggleBlockUser(user)}
+                              className={`px-3 py-2 text-xs font-semibold rounded-lg flex items-center gap-1.5 ${
+                                user.isBlocked
+                                  ? 'bg-emerald-700 text-white hover:bg-emerald-800'
+                                  : 'bg-red-50 text-red-700 border border-red-200 hover:bg-red-100'
+                              }`}
+                            >
+                              {user.isBlocked ? (
+                                <>
+                                  <Unlock className="w-3.5 h-3.5" />
+                                  בטל חסימת משתמש
+                                </>
+                              ) : (
+                                <>
+                                  <Lock className="w-3.5 h-3.5" />
+                                  חסום ונתק סשנים פעילים
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* 8 Domain Permissions Grid */}
+                        <div>
+                          <h4 className="text-xs font-bold text-slate-800 mb-2">
+                            הרשאות גרנולאריות לפי תחום (4 רמות גישה לכל תחום):
+                          </h4>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                            {(Object.keys(PERMISSION_DOMAIN_LABELS) as PermissionDomain[]).map(
+                              (dom) => (
+                                <div
+                                  key={dom}
+                                  className="p-2.5 bg-white border border-slate-300/80 rounded-lg"
+                                >
+                                  <label className="block text-xs font-semibold text-slate-800 mb-1">
+                                    {PERMISSION_DOMAIN_LABELS[dom]}
+                                  </label>
+                                  <select
+                                    disabled={!canManageUsers}
+                                    value={user.permissions[dom] || 'none'}
+                                    onChange={(e) =>
+                                      handleDomainLevelChange(
+                                        user,
+                                        dom,
+                                        e.target.value as AccessLevel
+                                      )
+                                    }
+                                    className="w-full px-2 py-1 text-xs border border-slate-300 rounded bg-white"
+                                  >
+                                    {(Object.keys(ACCESS_LEVEL_LABELS) as AccessLevel[]).map(
+                                      (lvl) => (
+                                        <option key={lvl} value={lvl}>
+                                          {ACCESS_LEVEL_LABELS[lvl]}
+                                        </option>
+                                      )
+                                    )}
+                                  </select>
+                                </div>
+                              )
+                            )}
+                          </div>
+                        </div>
+
+                        {/* 4 Sensitive Permissions */}
+                        <div className="pt-2 border-t border-slate-200">
+                          <h4 className="text-xs font-bold text-slate-800 mb-2">
+                            הרשאות נפרדות לפעולות רגישות:
+                          </h4>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                            {(
+                              Object.keys(SENSITIVE_PERMISSION_LABELS) as SensitivePermission[]
+                            ).map((perm) => (
+                              <label
+                                key={perm}
+                                className="flex items-center gap-2 p-2.5 bg-white border border-slate-300/80 rounded-lg text-xs font-medium text-slate-800 cursor-pointer"
+                              >
+                                <input
+                                  type="checkbox"
+                                  disabled={!canManageUsers}
+                                  checked={Boolean(user.sensitivePermissions[perm])}
+                                  onChange={() => handleSensitiveToggle(user, perm)}
+                                />
+                                <span>{SENSITIVE_PERMISSION_LABELS[perm]}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+          </div>
         </div>
       )}
 
