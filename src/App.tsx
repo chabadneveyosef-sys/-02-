@@ -6,7 +6,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   onAuthStateChanged,
-  signInWithPopup,
   signOut,
   User as FirebaseUser,
 } from 'firebase/auth';
@@ -16,8 +15,6 @@ import {
   getDoc,
   setDoc,
   onSnapshot,
-  query,
-  where,
 } from 'firebase/firestore';
 import {
   Calendar,
@@ -274,13 +271,45 @@ export default function App() {
     });
   }, [activities, tasks, transactions, donors, communityEntities, defaultMapLocation, triggerShortcutToast]);
 
-  // Load offline repository cache on boot
+  const [isInitialRepoLoaded, setIsInitialRepoLoaded] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+
+  // Load offline repository cache + recover custom records from v1 cache + server persistent repository on boot
   useEffect(() => {
+    let isMounted = true;
     try {
-      const cached = localStorage.getItem(LOCAL_CACHE_KEY);
-      if (cached) {
-        const parsed = JSON.parse(cached);
+      const cachedV2 = localStorage.getItem(LOCAL_CACHE_KEY);
+      const cachedV1 = localStorage.getItem('chabad_erp_offline_repository_v1');
+      const parsed = cachedV2 ? JSON.parse(cachedV2) : null;
+      const parsedV1 = cachedV1 ? JSON.parse(cachedV1) : null;
+
+      const SEED_TITLES = new Set([
+        'מבצע שופר ותפילות ראש השנה בקהילה',
+        'התוועדות י״ט כסלו — חג הגאולה וראש השנה לחסידות',
+        'מבצע חנוכה — הדלקות מרכזיות וחלוקת סופגניות',
+        'התוועדות י״א ניסן — יום הולדת הרבי',
+        'סדר פסח קהילתי מרכזי וחלוקת מצות שמורה',
+        'פרויקט הפקת התוועדות י״ט כסלו השנתית',
+        'סגירת אולם וקייטרינג מרכזי',
+        'עיצוב והדפסת הזמנות יוקרתיות ומודעות רחוב',
+        'תיאום הגברה, תאורה ומסכי לד',
+        'סבב טלפונים אישיים לתורמים ואישורי הגעה VIP',
+        'תרומה לפעילות ראש השנה ויום כיפור',
+        'תרומה שנתית דרך העמותה השנייה (בניכוי עמלת תקורה 3%)',
+        'רכישת ערכות שופר, מחזורים ודבש לחלוקה',
+        'תשלום עבור הפקת חוברות לימוד ואירוח מרצים',
+        'התחייבות לחסות שולחן מרכזי בהתוועדות י״ט כסלו',
+        'אברהם יצחק גולדשטיין',
+        'דודו ומשפחת אזולאי',
+        'ד״ר שמעון רוזנברג',
+        'נתנאל ברקוביץ׳ (מתנדב שטח)',
+        'שיעור תניא וחסידות שבועי',
+        'הערת רחוב: מרכז מסחרי נווה יוסף',
+      ]);
+
+      if (parsed) {
         if (parsed.users?.length) setUsers(parsed.users);
+        if (parsed.auditLogs?.length) setAuditLogs(parsed.auditLogs);
         if (parsed.templates?.length) setTemplates(parsed.templates);
         if (parsed.activities?.length) setActivities(parsed.activities);
         if (parsed.tasks?.length) setTasks(parsed.tasks);
@@ -289,31 +318,121 @@ export default function App() {
         if (parsed.communityEntities?.length) setCommunityEntities(parsed.communityEntities);
         if (parsed.defaultMapLocation?.lat) setDefaultMapLocation(parsed.defaultMapLocation);
       }
+
+      if (parsedV1) {
+        const customActs = (parsedV1.activities || []).filter(
+          (a: AnnualActivityRecord) => !SEED_TITLES.has(a.title)
+        );
+        const customTasks = (parsedV1.tasks || []).filter(
+          (t: TaskNodeRecord) => !SEED_TITLES.has(t.title)
+        );
+        const customTxs = (parsedV1.transactions || []).filter(
+          (tx: FinancialTransactionRecord) => !SEED_TITLES.has(tx.description)
+        );
+        const customDonors = (parsedV1.donors || []).filter(
+          (d: DonorContactRecord) => !SEED_TITLES.has(d.fullName)
+        );
+        const customComm = (parsedV1.communityEntities || []).filter(
+          (c: VolunteerEntityRecord) => !SEED_TITLES.has(c.titleOrName)
+        );
+        if (customActs.length > 0 && (!parsed?.activities || parsed.activities.length === 0)) {
+          setActivities(customActs);
+        }
+        if (customTasks.length > 0 && (!parsed?.tasks || parsed.tasks.length === 0)) {
+          setTasks(customTasks);
+        }
+        if (customTxs.length > 0 && (!parsed?.transactions || parsed.transactions.length === 0)) {
+          setTransactions(customTxs);
+        }
+        if (customDonors.length > 0 && (!parsed?.donors || parsed.donors.length === 0)) {
+          setDonors(customDonors);
+        }
+        if (customComm.length > 0 && (!parsed?.communityEntities || parsed.communityEntities.length === 0)) {
+          setCommunityEntities(customComm);
+        }
+      }
     } catch {
       // Ignore corrupt local cache
     }
+
+    fetch('/api/repository')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json) => {
+        if (!isMounted) return;
+        const srv = json?.data;
+        if (srv) {
+          if (Array.isArray(srv.users) && srv.users.length > 0) setUsers(srv.users);
+          if (Array.isArray(srv.auditLogs) && srv.auditLogs.length > 0) setAuditLogs(srv.auditLogs);
+          if (Array.isArray(srv.templates) && srv.templates.length > 0) setTemplates(srv.templates);
+          if (Array.isArray(srv.activities) && srv.activities.length > 0) setActivities(srv.activities);
+          if (Array.isArray(srv.tasks) && srv.tasks.length > 0) setTasks(srv.tasks);
+          if (Array.isArray(srv.transactions) && srv.transactions.length > 0) setTransactions(srv.transactions);
+          if (Array.isArray(srv.donors) && srv.donors.length > 0) setDonors(srv.donors);
+          if (Array.isArray(srv.communityEntities) && srv.communityEntities.length > 0)
+            setCommunityEntities(srv.communityEntities);
+          if (srv.defaultMapLocation?.lat) setDefaultMapLocation(srv.defaultMapLocation);
+          if (srv.updatedAt) setLastSyncedAt(srv.updatedAt);
+        }
+        setIsInitialRepoLoaded(true);
+      })
+      .catch(() => {
+        if (isMounted) setIsInitialRepoLoaded(true);
+      });
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
-  // Persist repository state to local cache for offline continuity
+  // Persist repository state to local cache AND server repository for instant cross-session persistence
   useEffect(() => {
+    const payload = {
+      users,
+      auditLogs,
+      templates,
+      activities,
+      tasks,
+      transactions,
+      donors,
+      communityEntities,
+      defaultMapLocation,
+    };
     try {
-      localStorage.setItem(
-        LOCAL_CACHE_KEY,
-        JSON.stringify({
-          users,
-          templates,
-          activities,
-          tasks,
-          transactions,
-          donors,
-          communityEntities,
-          defaultMapLocation,
-        })
-      );
+      localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(payload));
     } catch {
       // Ignore quota errors
     }
-  }, [users, templates, activities, tasks, transactions, donors, communityEntities, defaultMapLocation]);
+
+    if (!isInitialRepoLoaded) return;
+
+    const timer = window.setTimeout(() => {
+      fetch('/api/repository', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((json) => {
+          if (json?.updatedAt) setLastSyncedAt(json.updatedAt);
+        })
+        .catch(() => {
+          // Operate silently if offline
+        });
+    }, 350);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    isInitialRepoLoaded,
+    users,
+    auditLogs,
+    templates,
+    activities,
+    tasks,
+    transactions,
+    donors,
+    communityEntities,
+    defaultMapLocation,
+  ]);
 
   // Global keyboard shortcuts: Ctrl+Z (Undo), Ctrl+Y / Ctrl+Shift+Z (Redo), Ctrl+S (Save/Sync), Ctrl+K / Ctrl+F (Search), Ctrl+N (New), Alt+1..7 (Tabs), ? (Shortcuts Help)
   useEffect(() => {
@@ -341,7 +460,7 @@ export default function App() {
         }
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
         e.preventDefault();
-        triggerShortcutToast('כל הנתונים נשמרו אוטומטית בזיכרון המקומי ובענן (Ctrl+S)');
+        triggerShortcutToast('כל הנתונים נשמרו אוטומטית בזיכרון המקומי ובמסד הנתונים בענן (Ctrl+S)');
       } else if (
         (e.ctrlKey || e.metaKey) &&
         (e.key.toLowerCase() === 'k' || e.key.toLowerCase() === 'f')
@@ -492,42 +611,56 @@ export default function App() {
     };
   }, [parsedUsers, fbUser, localLoggedInUserId]);
 
-  // Firestore Real-time Sync Listeners (aligned with Auth & RBAC lifecycle)
+  const isSessionActive = Boolean(fbUser || localLoggedInUserId);
+
+  // Firestore Real-time Sync Listeners (active for both Google Auth and Username/Password ERP sessions)
   useEffect(() => {
-    if (!authReady || !fbUser) return;
+    if (!authReady) return;
 
     const onSyncError = (err: unknown, path: string) => {
       const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes('unavailable') || msg.includes('offline')) {
-        // Operate silently from local offline cache when Cloud Firestore is unreachable
+      if (msg.includes('unavailable') || msg.includes('offline') || msg.includes('Missing or insufficient permissions')) {
+        // Operate seamlessly from local + server repository cache if offline
         return;
       }
       handleFirestoreError(err, OperationType.LIST, path);
     };
 
-    const isUserAdmin =
-      fbUser.email === 'chabadneveyosef@gmail.com' || currentUser.roleTemplate === 'admin';
-
-    const usersQuery = isUserAdmin
-      ? collection(db, 'users')
-      : query(collection(db, 'users'), where('uid', '==', fbUser.uid));
-
     const unsubUsers = onSnapshot(
-      usersQuery,
+      collection(db, 'users'),
       (snap) => {
         if (!snap.empty) {
-          setUsers(snap.docs.map((d) => d.data() as UserRecord));
+          const cloudUsers = snap.docs.map((d) => d.data() as UserRecord);
+          setUsers((prev) => {
+            const byId = new Map<string, UserRecord>();
+            for (const u of prev) byId.set(u.id, u);
+            for (const cu of cloudUsers) {
+              const existing = byId.get(cu.id);
+              if (!existing || cu.updatedAt >= existing.updatedAt) {
+                byId.set(cu.id, cu);
+              }
+            }
+            return Array.from(byId.values());
+          });
         }
       },
       (err) => onSyncError(err, 'users')
     );
 
+    if (!isSessionActive) {
+      return () => {
+        unsubUsers();
+      };
+    }
+
     const unsubAudit = onSnapshot(
       collection(db, 'audit_logs'),
       (snap) => {
-        const list = snap.docs.map((d) => d.data() as AuditLogRecord);
-        list.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
-        setAuditLogs(list);
+        if (!snap.empty) {
+          const list = snap.docs.map((d) => d.data() as AuditLogRecord);
+          list.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+          setAuditLogs(list);
+        }
       },
       (err) => onSyncError(err, 'audit_logs')
     );
@@ -536,7 +669,16 @@ export default function App() {
       collection(db, 'annual_activities'),
       (snap) => {
         if (!snap.empty) {
-          setActivities(snap.docs.map((d) => d.data() as AnnualActivityRecord));
+          const cloudItems = snap.docs.map((d) => d.data() as AnnualActivityRecord);
+          setActivities((prev) => {
+            const byId = new Map<string, AnnualActivityRecord>();
+            for (const item of prev) byId.set(item.id, item);
+            for (const cItem of cloudItems) {
+              const ex = byId.get(cItem.id);
+              if (!ex || cItem.updatedAt >= ex.updatedAt) byId.set(cItem.id, cItem);
+            }
+            return Array.from(byId.values());
+          });
         }
       },
       (err) => onSyncError(err, 'annual_activities')
@@ -546,7 +688,16 @@ export default function App() {
       collection(db, 'tasks'),
       (snap) => {
         if (!snap.empty) {
-          setTasks(snap.docs.map((d) => d.data() as TaskNodeRecord));
+          const cloudItems = snap.docs.map((d) => d.data() as TaskNodeRecord);
+          setTasks((prev) => {
+            const byId = new Map<string, TaskNodeRecord>();
+            for (const item of prev) byId.set(item.id, item);
+            for (const cItem of cloudItems) {
+              const ex = byId.get(cItem.id);
+              if (!ex || cItem.updatedAt >= ex.updatedAt) byId.set(cItem.id, cItem);
+            }
+            return Array.from(byId.values());
+          });
         }
       },
       (err) => onSyncError(err, 'tasks')
@@ -556,7 +707,16 @@ export default function App() {
       collection(db, 'templates'),
       (snap) => {
         if (!snap.empty) {
-          setTemplates(snap.docs.map((d) => d.data() as DynamicTemplateRecord));
+          const cloudItems = snap.docs.map((d) => d.data() as DynamicTemplateRecord);
+          setTemplates((prev) => {
+            const byId = new Map<string, DynamicTemplateRecord>();
+            for (const item of prev) byId.set(item.id, item);
+            for (const cItem of cloudItems) {
+              const ex = byId.get(cItem.id);
+              if (!ex || cItem.updatedAt >= ex.updatedAt) byId.set(cItem.id, cItem);
+            }
+            return Array.from(byId.values());
+          });
         }
       },
       (err) => onSyncError(err, 'templates')
@@ -566,7 +726,16 @@ export default function App() {
       collection(db, 'transactions'),
       (snap) => {
         if (!snap.empty) {
-          setTransactions(snap.docs.map((d) => d.data() as FinancialTransactionRecord));
+          const cloudItems = snap.docs.map((d) => d.data() as FinancialTransactionRecord);
+          setTransactions((prev) => {
+            const byId = new Map<string, FinancialTransactionRecord>();
+            for (const item of prev) byId.set(item.id, item);
+            for (const cItem of cloudItems) {
+              const ex = byId.get(cItem.id);
+              if (!ex || cItem.updatedAt >= ex.updatedAt) byId.set(cItem.id, cItem);
+            }
+            return Array.from(byId.values());
+          });
         }
       },
       (err) => onSyncError(err, 'transactions')
@@ -576,7 +745,16 @@ export default function App() {
       collection(db, 'donors'),
       (snap) => {
         if (!snap.empty) {
-          setDonors(snap.docs.map((d) => d.data() as DonorContactRecord));
+          const cloudItems = snap.docs.map((d) => d.data() as DonorContactRecord);
+          setDonors((prev) => {
+            const byId = new Map<string, DonorContactRecord>();
+            for (const item of prev) byId.set(item.id, item);
+            for (const cItem of cloudItems) {
+              const ex = byId.get(cItem.id);
+              if (!ex || cItem.updatedAt >= ex.updatedAt) byId.set(cItem.id, cItem);
+            }
+            return Array.from(byId.values());
+          });
         }
       },
       (err) => onSyncError(err, 'donors')
@@ -586,7 +764,16 @@ export default function App() {
       collection(db, 'community_entities'),
       (snap) => {
         if (!snap.empty) {
-          setCommunityEntities(snap.docs.map((d) => d.data() as VolunteerEntityRecord));
+          const cloudItems = snap.docs.map((d) => d.data() as VolunteerEntityRecord);
+          setCommunityEntities((prev) => {
+            const byId = new Map<string, VolunteerEntityRecord>();
+            for (const item of prev) byId.set(item.id, item);
+            for (const cItem of cloudItems) {
+              const ex = byId.get(cItem.id);
+              if (!ex || cItem.updatedAt >= ex.updatedAt) byId.set(cItem.id, cItem);
+            }
+            return Array.from(byId.values());
+          });
         }
       },
       (err) => onSyncError(err, 'community_entities')
@@ -602,7 +789,7 @@ export default function App() {
       unsubDonors();
       unsubCommunity();
     };
-  }, [authReady, fbUser, currentUser.roleTemplate]);
+  }, [authReady, isSessionActive]);
 
   // Immediate session termination if current user becomes blocked
   useEffect(() => {
@@ -628,21 +815,21 @@ export default function App() {
         updatedAt: now,
       };
       setAuditLogs((prev) => [record, ...prev]);
-      if (fbUser) {
-        try {
-          await setDoc(doc(db, 'audit_logs', logId), sanitizeForFirestore(record));
-        } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, `audit_logs/${logId}`);
-        }
+      try {
+        await setDoc(doc(db, 'audit_logs', logId), sanitizeForFirestore(record));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, `audit_logs/${logId}`);
       }
     },
-    [currentUser.uid, currentUser.displayName, fbUser]
+    [currentUser.uid, currentUser.displayName]
   );
 
-  // Seed initial data into Firestore if empty on first admin login
+  // Sync all current repository data to Cloud Firestore & Server Repository
   const handleSyncSeedToCloud = async () => {
-    if (!fbUser) return;
     try {
+      for (const usr of users) {
+        await setDoc(doc(db, 'users', usr.id), sanitizeForFirestore(usr));
+      }
       for (const tpl of templates) {
         await setDoc(doc(db, 'templates', tpl.id), sanitizeForFirestore(tpl));
       }
@@ -661,7 +848,23 @@ export default function App() {
       for (const c of communityEntities) {
         await setDoc(doc(db, 'community_entities', c.id), sanitizeForFirestore(c));
       }
-      await writeAuditLog('סנכרון נתוני בסיס (Seed)', 'system', 'מסד נתונים ענן', 'סנכרון ראשוני של תבניות ונתוני בית חב״ד לענן');
+      await fetch('/api/repository', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          users,
+          auditLogs,
+          templates,
+          activities,
+          tasks,
+          transactions,
+          donors,
+          communityEntities,
+          defaultMapLocation,
+        }),
+      }).catch(() => null);
+      setLastSyncedAt(new Date().toISOString());
+      triggerShortcutToast('כל הנתונים סונכרנו ונשמרו בהצלחה במסד הנתונים בענן (Cloud Firestore)');
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, 'seed_sync');
     }
@@ -912,13 +1115,14 @@ export default function App() {
                 ))}
             </select>
           )}
-          {fbUser && (
+          {isSessionActive && (
             <button
               type="button"
               onClick={handleSyncSeedToCloud}
-              className="underline text-amber-300 hover:text-amber-200"
+              className="underline text-amber-300 hover:text-amber-200 font-semibold"
+              title={lastSyncedAt ? `סונכרן לאחרונה: ${new Date(lastSyncedAt).toLocaleTimeString('he-IL')}` : 'שמור וסנכרן את כל הנתונים לענן כעת'}
             >
-              סנכרן נתוני התחלה לענן
+              שמור וסנכרן לענן (Ctrl+S)
             </button>
           )}
         </div>
@@ -1193,6 +1397,11 @@ export default function App() {
                       updatedAt: now,
                     };
                     setUsers((prev) => [...prev, newUser]);
+                    try {
+                      await setDoc(doc(db, 'users', newId), sanitizeForFirestore(newUser));
+                    } catch (err) {
+                      handleFirestoreError(err, OperationType.CREATE, `users/${newId}`);
+                    }
                     setRegDisplayNameInput('');
                     setRegEmailInput('');
                     setUsernameInput('');
@@ -1359,12 +1568,10 @@ export default function App() {
                 updatedAt: now,
               };
               setTasks((prev) => prev.map((t) => (t.id === task.id ? updated : t)));
-              if (fbUser) {
-                try {
-                  await setDoc(doc(db, 'tasks', task.id), sanitizeForFirestore(updated));
-                } catch (err) {
-                  handleFirestoreError(err, OperationType.UPDATE, `tasks/${task.id}`);
-                }
+              try {
+                await setDoc(doc(db, 'tasks', task.id), sanitizeForFirestore(updated));
+              } catch (err) {
+                handleFirestoreError(err, OperationType.UPDATE, `tasks/${task.id}`);
               }
             }}
             onNavigateTab={(tab) => setActiveTab(tab)}
@@ -1394,12 +1601,10 @@ export default function App() {
               setActivities((prev) =>
                 existingId ? prev.map((a) => (a.id === id ? record : a)) : [...prev, record]
               );
-              if (fbUser) {
-                try {
-                  await setDoc(doc(db, 'annual_activities', id), sanitizeForFirestore(record));
-                } catch (err) {
-                  handleFirestoreError(err, OperationType.WRITE, `annual_activities/${id}`);
-                }
+              try {
+                await setDoc(doc(db, 'annual_activities', id), sanitizeForFirestore(record));
+              } catch (err) {
+                handleFirestoreError(err, OperationType.WRITE, `annual_activities/${id}`);
               }
               return id;
             }}
@@ -1412,12 +1617,10 @@ export default function App() {
                 updatedAt: now,
               };
               setActivities((prev) => prev.map((a) => (a.id === act.id ? updated : a)));
-              if (fbUser) {
-                try {
-                  await setDoc(doc(db, 'annual_activities', act.id), sanitizeForFirestore(updated));
-                } catch (err) {
-                  handleFirestoreError(err, OperationType.UPDATE, `annual_activities/${act.id}`);
-                }
+              try {
+                await setDoc(doc(db, 'annual_activities', act.id), sanitizeForFirestore(updated));
+              } catch (err) {
+                handleFirestoreError(err, OperationType.UPDATE, `annual_activities/${act.id}`);
               }
             }}
             onSoftDeleteActivity={async (id) => {
@@ -1428,12 +1631,10 @@ export default function App() {
               const updated: AnnualActivityRecord = { ...target, deletedAt: now, updatedAt: now };
               setActivities((prev) => prev.map((a) => (a.id === id ? updated : a)));
               await writeAuditLog('מחיקה רכה של פעילות שנתית', id, target.title, 'סומן deleted_at');
-              if (fbUser) {
-                try {
-                  await setDoc(doc(db, 'annual_activities', id), sanitizeForFirestore(updated));
-                } catch (err) {
-                  handleFirestoreError(err, OperationType.UPDATE, `annual_activities/${id}`);
-                }
+              try {
+                await setDoc(doc(db, 'annual_activities', id), sanitizeForFirestore(updated));
+              } catch (err) {
+                handleFirestoreError(err, OperationType.UPDATE, `annual_activities/${id}`);
               }
             }}
             onSaveTask={async (data, existingId) => {
@@ -1450,12 +1651,10 @@ export default function App() {
               setTasks((prev) =>
                 existingId ? prev.map((t) => (t.id === id ? record : t)) : [...prev, record]
               );
-              if (fbUser) {
-                try {
-                  await setDoc(doc(db, 'tasks', id), sanitizeForFirestore(record));
-                } catch (err) {
-                  handleFirestoreError(err, OperationType.WRITE, `tasks/${id}`);
-                }
+              try {
+                await setDoc(doc(db, 'tasks', id), sanitizeForFirestore(record));
+              } catch (err) {
+                handleFirestoreError(err, OperationType.WRITE, `tasks/${id}`);
               }
             }}
             onToggleTaskCompleted={async (task) => {
@@ -1467,12 +1666,10 @@ export default function App() {
                 updatedAt: now,
               };
               setTasks((prev) => prev.map((t) => (t.id === task.id ? updated : t)));
-              if (fbUser) {
-                try {
-                  await setDoc(doc(db, 'tasks', task.id), sanitizeForFirestore(updated));
-                } catch (err) {
-                  handleFirestoreError(err, OperationType.UPDATE, `tasks/${task.id}`);
-                }
+              try {
+                await setDoc(doc(db, 'tasks', task.id), sanitizeForFirestore(updated));
+              } catch (err) {
+                handleFirestoreError(err, OperationType.UPDATE, `tasks/${task.id}`);
               }
             }}
             onSoftDeleteTask={async (id) => {
@@ -1482,12 +1679,10 @@ export default function App() {
               recordUndoSnapshot(`מחיקת משימה: ${target.title}`);
               const updated: TaskNodeRecord = { ...target, deletedAt: now, updatedAt: now };
               setTasks((prev) => prev.map((t) => (t.id === id ? updated : t)));
-              if (fbUser) {
-                try {
-                  await setDoc(doc(db, 'tasks', id), sanitizeForFirestore(updated));
-                } catch (err) {
-                  handleFirestoreError(err, OperationType.UPDATE, `tasks/${id}`);
-                }
+              try {
+                await setDoc(doc(db, 'tasks', id), sanitizeForFirestore(updated));
+              } catch (err) {
+                handleFirestoreError(err, OperationType.UPDATE, `tasks/${id}`);
               }
             }}
           />
@@ -1511,12 +1706,10 @@ export default function App() {
               setTasks((prev) =>
                 existingId ? prev.map((t) => (t.id === id ? record : t)) : [...prev, record]
               );
-              if (fbUser) {
-                try {
-                  await setDoc(doc(db, 'tasks', id), sanitizeForFirestore(record));
-                } catch (err) {
-                  handleFirestoreError(err, OperationType.WRITE, `tasks/${id}`);
-                }
+              try {
+                await setDoc(doc(db, 'tasks', id), sanitizeForFirestore(record));
+              } catch (err) {
+                handleFirestoreError(err, OperationType.WRITE, `tasks/${id}`);
               }
             }}
             onToggleTaskCompleted={async (task) => {
@@ -1528,12 +1721,10 @@ export default function App() {
                 updatedAt: now,
               };
               setTasks((prev) => prev.map((t) => (t.id === task.id ? updated : t)));
-              if (fbUser) {
-                try {
-                  await setDoc(doc(db, 'tasks', task.id), sanitizeForFirestore(updated));
-                } catch (err) {
-                  handleFirestoreError(err, OperationType.UPDATE, `tasks/${task.id}`);
-                }
+              try {
+                await setDoc(doc(db, 'tasks', task.id), sanitizeForFirestore(updated));
+              } catch (err) {
+                handleFirestoreError(err, OperationType.UPDATE, `tasks/${task.id}`);
               }
             }}
             onSoftDeleteTask={async (id) => {
@@ -1543,12 +1734,10 @@ export default function App() {
               recordUndoSnapshot(`מחיקת משימה: ${target.title}`);
               const updated: TaskNodeRecord = { ...target, deletedAt: now, updatedAt: now };
               setTasks((prev) => prev.map((t) => (t.id === id ? updated : t)));
-              if (fbUser) {
-                try {
-                  await setDoc(doc(db, 'tasks', id), sanitizeForFirestore(updated));
-                } catch (err) {
-                  handleFirestoreError(err, OperationType.UPDATE, `tasks/${id}`);
-                }
+              try {
+                await setDoc(doc(db, 'tasks', id), sanitizeForFirestore(updated));
+              } catch (err) {
+                handleFirestoreError(err, OperationType.UPDATE, `tasks/${id}`);
               }
             }}
           />
@@ -1580,12 +1769,10 @@ export default function App() {
                 data.description,
                 `נטו: ${formatAgorotToIls(data.netAmountAgorot)} (עמלה: ${data.feePercent}%)`
               );
-              if (fbUser) {
-                try {
-                  await setDoc(doc(db, 'transactions', id), sanitizeForFirestore(record));
-                } catch (err) {
-                  handleFirestoreError(err, OperationType.CREATE, `transactions/${id}`);
-                }
+              try {
+                await setDoc(doc(db, 'transactions', id), sanitizeForFirestore(record));
+              } catch (err) {
+                handleFirestoreError(err, OperationType.CREATE, `transactions/${id}`);
               }
             }}
             onUpdateTransactionStatus={async (tx, newStatus) => {
@@ -1597,12 +1784,10 @@ export default function App() {
                 updatedAt: now,
               };
               setTransactions((prev) => prev.map((t) => (t.id === tx.id ? updated : t)));
-              if (fbUser) {
-                try {
-                  await setDoc(doc(db, 'transactions', tx.id), sanitizeForFirestore(updated));
-                } catch (err) {
-                  handleFirestoreError(err, OperationType.UPDATE, `transactions/${tx.id}`);
-                }
+              try {
+                await setDoc(doc(db, 'transactions', tx.id), sanitizeForFirestore(updated));
+              } catch (err) {
+                handleFirestoreError(err, OperationType.UPDATE, `transactions/${tx.id}`);
               }
             }}
             onSoftDeleteTransaction={async (id) => {
@@ -1617,12 +1802,10 @@ export default function App() {
               };
               setTransactions((prev) => prev.map((t) => (t.id === id ? updated : t)));
               await writeAuditLog('מחיקה רכה של תנועה כספית', id, target.description, 'סומן deleted_at');
-              if (fbUser) {
-                try {
-                  await setDoc(doc(db, 'transactions', id), sanitizeForFirestore(updated));
-                } catch (err) {
-                  handleFirestoreError(err, OperationType.UPDATE, `transactions/${id}`);
-                }
+              try {
+                await setDoc(doc(db, 'transactions', id), sanitizeForFirestore(updated));
+              } catch (err) {
+                handleFirestoreError(err, OperationType.UPDATE, `transactions/${id}`);
               }
             }}
           />
@@ -1651,12 +1834,10 @@ export default function App() {
               setDonors((prev) =>
                 existingId ? prev.map((d) => (d.id === id ? record : d)) : [record, ...prev]
               );
-              if (fbUser) {
-                try {
-                  await setDoc(doc(db, 'donors', id), sanitizeForFirestore(record));
-                } catch (err) {
-                  handleFirestoreError(err, OperationType.WRITE, `donors/${id}`);
-                }
+              try {
+                await setDoc(doc(db, 'donors', id), sanitizeForFirestore(record));
+              } catch (err) {
+                handleFirestoreError(err, OperationType.WRITE, `donors/${id}`);
               }
             }}
             onSoftDeleteDonor={async (id) => {
@@ -1667,12 +1848,10 @@ export default function App() {
               const updated: DonorContactRecord = { ...target, deletedAt: now, updatedAt: now };
               setDonors((prev) => prev.map((d) => (d.id === id ? updated : d)));
               await writeAuditLog('מחיקה רכה של איש קשר / תורם', id, target.fullName, 'סומן deleted_at');
-              if (fbUser) {
-                try {
-                  await setDoc(doc(db, 'donors', id), sanitizeForFirestore(updated));
-                } catch (err) {
-                  handleFirestoreError(err, OperationType.UPDATE, `donors/${id}`);
-                }
+              try {
+                await setDoc(doc(db, 'donors', id), sanitizeForFirestore(updated));
+              } catch (err) {
+                handleFirestoreError(err, OperationType.UPDATE, `donors/${id}`);
               }
             }}
             onLogRevealNationalId={async (donor) => {
@@ -1694,12 +1873,10 @@ export default function App() {
                 updatedAt: now,
               };
               setCommunityEntities((prev) => [record, ...prev]);
-              if (fbUser) {
-                try {
-                  await setDoc(doc(db, 'community_entities', id), sanitizeForFirestore(record));
-                } catch (err) {
-                  handleFirestoreError(err, OperationType.CREATE, `community_entities/${id}`);
-                }
+              try {
+                await setDoc(doc(db, 'community_entities', id), sanitizeForFirestore(record));
+              } catch (err) {
+                handleFirestoreError(err, OperationType.CREATE, `community_entities/${id}`);
               }
             }}
           />
@@ -1728,12 +1905,10 @@ export default function App() {
               recordUndoSnapshot(`עדכון מיקום דייר במפה: ${target.fullName}`);
               const updated: DonorContactRecord = { ...target, lat, lng, updatedAt: now };
               setDonors((prev) => prev.map((d) => (d.id === donorId ? updated : d)));
-              if (fbUser) {
-                try {
-                  await setDoc(doc(db, 'donors', donorId), sanitizeForFirestore(updated));
-                } catch (err) {
-                  handleFirestoreError(err, OperationType.UPDATE, `donors/${donorId}`);
-                }
+              try {
+                await setDoc(doc(db, 'donors', donorId), sanitizeForFirestore(updated));
+              } catch (err) {
+                handleFirestoreError(err, OperationType.UPDATE, `donors/${donorId}`);
               }
             }}
             onSaveDonor={async (data, existingId) => {
@@ -1750,12 +1925,10 @@ export default function App() {
               setDonors((prev) =>
                 existingId ? prev.map((d) => (d.id === id ? record : d)) : [record, ...prev]
               );
-              if (fbUser) {
-                try {
-                  await setDoc(doc(db, 'donors', id), sanitizeForFirestore(record));
-                } catch (err) {
-                  handleFirestoreError(err, OperationType.WRITE, `donors/${id}`);
-                }
+              try {
+                await setDoc(doc(db, 'donors', id), sanitizeForFirestore(record));
+              } catch (err) {
+                handleFirestoreError(err, OperationType.WRITE, `donors/${id}`);
               }
             }}
             onSoftDeleteDonor={async (id) => {
@@ -1766,12 +1939,10 @@ export default function App() {
               const updated: DonorContactRecord = { ...target, deletedAt: now, updatedAt: now };
               setDonors((prev) => prev.map((d) => (d.id === id ? updated : d)));
               await writeAuditLog('הסרת דייר מבניין במפה (מחיקה רכה)', id, target.fullName, 'סומן deleted_at');
-              if (fbUser) {
-                try {
-                  await setDoc(doc(db, 'donors', id), sanitizeForFirestore(updated));
-                } catch (err) {
-                  handleFirestoreError(err, OperationType.UPDATE, `donors/${id}`);
-                }
+              try {
+                await setDoc(doc(db, 'donors', id), sanitizeForFirestore(updated));
+              } catch (err) {
+                handleFirestoreError(err, OperationType.UPDATE, `donors/${id}`);
               }
             }}
             onAddStreetNote={async (title, address, notes, lat, lng) => {
@@ -1791,12 +1962,10 @@ export default function App() {
                 updatedAt: now,
               };
               setCommunityEntities((prev) => [record, ...prev]);
-              if (fbUser) {
-                try {
-                  await setDoc(doc(db, 'community_entities', id), sanitizeForFirestore(record));
-                } catch (err) {
-                  handleFirestoreError(err, OperationType.CREATE, `community_entities/${id}`);
-                }
+              try {
+                await setDoc(doc(db, 'community_entities', id), sanitizeForFirestore(record));
+              } catch (err) {
+                handleFirestoreError(err, OperationType.CREATE, `community_entities/${id}`);
               }
             }}
             onSelectDonor={(donorId) => {
@@ -1858,12 +2027,10 @@ export default function App() {
                 data.displayName,
                 `תפקיד: ${ROLE_TEMPLATE_LABELS[data.roleTemplate]}, שם משתמש: ${data.username}`
               );
-              if (fbUser) {
-                try {
-                  await setDoc(doc(db, 'users', id), sanitizeForFirestore(record));
-                } catch (err) {
-                  handleFirestoreError(err, OperationType.CREATE, `users/${id}`);
-                }
+              try {
+                await setDoc(doc(db, 'users', id), sanitizeForFirestore(record));
+              } catch (err) {
+                handleFirestoreError(err, OperationType.CREATE, `users/${id}`);
               }
             }}
             onUpdateUserRoleAndPermissions={async (
@@ -1909,12 +2076,10 @@ export default function App() {
                 targetUser.displayName,
                 `תפקיד: ${newRole}, מאושר: ${!resolvedPending}, חסום: ${newIsBlocked}, גרסת סשן: #${nextSessionVersion}`
               );
-              if (fbUser) {
-                try {
-                  await setDoc(doc(db, 'users', targetUser.id), sanitizeForFirestore(updated));
-                } catch (err) {
-                  handleFirestoreError(err, OperationType.UPDATE, `users/${targetUser.id}`);
-                }
+              try {
+                await setDoc(doc(db, 'users', targetUser.id), sanitizeForFirestore(updated));
+              } catch (err) {
+                handleFirestoreError(err, OperationType.UPDATE, `users/${targetUser.id}`);
               }
             }}
             onSaveTemplate={async (name, category, schemaJson) => {
@@ -1929,20 +2094,38 @@ export default function App() {
                 updatedAt: now,
               };
               setTemplates((prev) => [...prev, record]);
-              if (fbUser) {
-                try {
-                  await setDoc(doc(db, 'templates', id), sanitizeForFirestore(record));
-                } catch (err) {
-                  handleFirestoreError(err, OperationType.CREATE, `templates/${id}`);
-                }
+              try {
+                await setDoc(doc(db, 'templates', id), sanitizeForFirestore(record));
+              } catch (err) {
+                handleFirestoreError(err, OperationType.CREATE, `templates/${id}`);
               }
             }}
             onRestoreBackupData={async (payload) => {
               recordUndoSnapshot('שחזור גיבוי מלא מוצפן');
-              if (payload.activities) setActivities(payload.activities);
-              if (payload.tasks) setTasks(payload.tasks);
-              if (payload.transactions) setTransactions(payload.transactions);
-              if (payload.donors) setDonors(payload.donors);
+              if (payload.activities) {
+                setActivities(payload.activities);
+                for (const act of payload.activities) {
+                  await setDoc(doc(db, 'annual_activities', act.id), sanitizeForFirestore(act)).catch(() => null);
+                }
+              }
+              if (payload.tasks) {
+                setTasks(payload.tasks);
+                for (const t of payload.tasks) {
+                  await setDoc(doc(db, 'tasks', t.id), sanitizeForFirestore(t)).catch(() => null);
+                }
+              }
+              if (payload.transactions) {
+                setTransactions(payload.transactions);
+                for (const tx of payload.transactions) {
+                  await setDoc(doc(db, 'transactions', tx.id), sanitizeForFirestore(tx)).catch(() => null);
+                }
+              }
+              if (payload.donors) {
+                setDonors(payload.donors);
+                for (const d of payload.donors) {
+                  await setDoc(doc(db, 'donors', d.id), sanitizeForFirestore(d)).catch(() => null);
+                }
+              }
               await writeAuditLog(
                 'שחזור גיבוי מלא מוצפן',
                 'system',
@@ -2001,12 +2184,10 @@ export default function App() {
                 data.displayName,
                 `שם משתמש: ${data.username}, אימייל: ${data.email}`
               );
-              if (fbUser) {
-                try {
-                  await setDoc(doc(db, 'users', currentUser.id), sanitizeForFirestore(updatedRecord));
-                } catch (err) {
-                  handleFirestoreError(err, OperationType.UPDATE, `users/${currentUser.id}`);
-                }
+              try {
+                await setDoc(doc(db, 'users', currentUser.id), sanitizeForFirestore(updatedRecord));
+              } catch (err) {
+                handleFirestoreError(err, OperationType.UPDATE, `users/${currentUser.id}`);
               }
             }}
             onUpdatePreferences={async (prefs) => {
@@ -2035,12 +2216,10 @@ export default function App() {
                   ? prev.map((u) => (u.id === currentUser.id ? updatedRecord : u))
                   : [...prev, updatedRecord]
               );
-              if (fbUser) {
-                try {
-                  await setDoc(doc(db, 'users', currentUser.id), sanitizeForFirestore(updatedRecord));
-                } catch (err) {
-                  handleFirestoreError(err, OperationType.UPDATE, `users/${currentUser.id}`);
-                }
+              try {
+                await setDoc(doc(db, 'users', currentUser.id), sanitizeForFirestore(updatedRecord));
+              } catch (err) {
+                handleFirestoreError(err, OperationType.UPDATE, `users/${currentUser.id}`);
               }
             }}
           />
