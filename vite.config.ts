@@ -7,6 +7,28 @@ import { VitePWA } from 'vite-plugin-pwa';
 export default defineConfig(() => {
   return {
     plugins: [
+      {
+        name: 'disable-vite-client-ws',
+        enforce: 'post',
+        transform(code, id) {
+          if (id.includes('vite/dist/client/client.mjs')) {
+            return code
+              .replace(
+                'const transport = normalizeModuleRunnerTransport((() => {',
+                'const transport = { connect: async () => {}, disconnect: async () => {}, send: async () => {}, invoke: async () => ({ result: undefined }) }; const _unusedTransport = normalizeModuleRunnerTransport((() => {'
+              )
+              .replace(
+                'transport.connect(createHMRHandler(handleMessage));',
+                '/* HMR WebSocket disabled in AI Studio */'
+              )
+              .replace(
+                'setupForwardConsoleHandler(transport, forwardConsole);',
+                '/* ForwardConsole WebSocket disabled in AI Studio */'
+              );
+          }
+          return null;
+        },
+      },
       react(),
       tailwindcss(),
       VitePWA({

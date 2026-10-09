@@ -1,23 +1,21 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, User } from 'firebase/auth';
 import {
-  initializeFirestore,
+  getFirestore,
+  setLogLevel,
   doc,
   getDocFromServer,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
+// Suppress noisy internal Firestore offline/WebChannel polling warnings in preview
+setLogLevel('silent');
+
 const app = initializeApp(firebaseConfig);
 
 const configWithDb = firebaseConfig as typeof firebaseConfig & { firestoreDatabaseId?: string };
 
-export const db = initializeFirestore(
-  app,
-  {
-    experimentalForceLongPolling: true,
-  },
-  configWithDb.firestoreDatabaseId
-);
+export const db = getFirestore(app, configWithDb.firestoreDatabaseId);
 
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
