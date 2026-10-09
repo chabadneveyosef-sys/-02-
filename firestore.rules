@@ -100,7 +100,7 @@ service cloud.firestore {
 
     function isValidTaskNode(data) {
       return data.keys().hasAll(['id', 'title', 'isProject', 'durationDays', 'isCompleted', 'dependsOnIdsJson', 'createdAt', 'updatedAt']) &&
-        data.keys().hasOnly(['id', 'title', 'parentId', 'targetDate', 'hebrewDateStr', 'isProject', 'strategicGoal', 'successCriteria', 'durationDays', 'isCompleted', 'assignee', 'dependsOnIdsJson', 'reminderDate', 'reminderEmail', 'createdAt', 'updatedAt', 'deletedAt']) &&
+        data.keys().hasOnly(['id', 'title', 'parentId', 'targetDate', 'hebrewDateStr', 'isProject', 'strategicGoal', 'successCriteria', 'durationDays', 'isCompleted', 'assignee', 'dependsOnIdsJson', 'reminderDate', 'reminderEmail', 'reminderDaysBefore', 'reminderChannelsJson', 'createdAt', 'updatedAt', 'deletedAt']) &&
         data.id is string && data.id.size() <= 64 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
         data.title is string && data.title.size() <= 150 &&
         (!('parentId' in data) || (data.parentId is string && data.parentId.size() <= 64)) &&
@@ -115,6 +115,8 @@ service cloud.firestore {
         data.dependsOnIdsJson is string && data.dependsOnIdsJson.size() <= 1000 &&
         (!('reminderDate' in data) || (data.reminderDate is string && data.reminderDate.size() <= 40)) &&
         (!('reminderEmail' in data) || (data.reminderEmail is string && data.reminderEmail.size() <= 150)) &&
+        (!('reminderDaysBefore' in data) || (data.reminderDaysBefore is number && data.reminderDaysBefore >= 0 && data.reminderDaysBefore <= 365)) &&
+        (!('reminderChannelsJson' in data) || (data.reminderChannelsJson is string && data.reminderChannelsJson.size() <= 500)) &&
         data.createdAt is string && data.createdAt.size() <= 40 &&
         data.updatedAt is string && data.updatedAt.size() <= 40 &&
         (!('deletedAt' in data) || (data.deletedAt is string && data.deletedAt.size() <= 40));
@@ -158,7 +160,7 @@ service cloud.firestore {
 
     function isValidDonorContact(data) {
       return data.keys().hasAll(['id', 'fullName', 'identifierMark', 'personalConnection', 'encryptedNationalId', 'nationalIdLast4', 'phone', 'address', 'createdAt', 'updatedAt']) &&
-        data.keys().hasOnly(['id', 'fullName', 'identifierMark', 'personalConnection', 'encryptedNationalId', 'nationalIdLast4', 'phone', 'email', 'address', 'city', 'lat', 'lng', 'significantDatesJson', 'interactionsJson', 'nextActionText', 'nextActionDate', 'attachmentsJson', 'createdAt', 'updatedAt', 'deletedAt']) &&
+        data.keys().hasOnly(['id', 'fullName', 'identifierMark', 'personalConnection', 'encryptedNationalId', 'nationalIdLast4', 'phone', 'email', 'address', 'city', 'lat', 'lng', 'significantDatesJson', 'interactionsJson', 'nextActionText', 'nextActionDate', 'attachmentsJson', 'tagsJson', 'createdAt', 'updatedAt', 'deletedAt']) &&
         data.id is string && data.id.size() <= 64 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
         data.fullName is string && data.fullName.size() <= 120 &&
         data.identifierMark is string && data.identifierMark.size() <= 120 &&
@@ -176,6 +178,7 @@ service cloud.firestore {
         (!('nextActionText' in data) || (data.nextActionText is string && data.nextActionText.size() <= 250)) &&
         (!('nextActionDate' in data) || (data.nextActionDate is string && data.nextActionDate.size() <= 40)) &&
         (!('attachmentsJson' in data) || (data.attachmentsJson is string && data.attachmentsJson.size() <= 2000)) &&
+        (!('tagsJson' in data) || (data.tagsJson is string && data.tagsJson.size() <= 2000)) &&
         data.createdAt is string && data.createdAt.size() <= 40 &&
         data.updatedAt is string && data.updatedAt.size() <= 40 &&
         (!('deletedAt' in data) || (data.deletedAt is string && data.deletedAt.size() <= 40));
@@ -255,7 +258,7 @@ service cloud.firestore {
         incoming().id == existing().id &&
         incoming().createdAt == existing().createdAt && (
           isAdmin() ||
-          incoming().diff(existing()).affectedKeys().hasOnly(['title', 'parentId', 'targetDate', 'hebrewDateStr', 'isProject', 'strategicGoal', 'successCriteria', 'durationDays', 'isCompleted', 'assignee', 'dependsOnIdsJson', 'reminderDate', 'reminderEmail', 'updatedAt', 'deletedAt'])
+          incoming().diff(existing()).affectedKeys().hasOnly(['title', 'parentId', 'targetDate', 'hebrewDateStr', 'isProject', 'strategicGoal', 'successCriteria', 'durationDays', 'isCompleted', 'assignee', 'dependsOnIdsJson', 'reminderDate', 'reminderEmail', 'reminderDaysBefore', 'reminderChannelsJson', 'updatedAt', 'deletedAt'])
         );
       allow delete: if isAdmin() && isValidId(taskId);
     }
@@ -294,7 +297,7 @@ service cloud.firestore {
         incoming().id == existing().id &&
         incoming().createdAt == existing().createdAt && (
           isAdmin() ||
-          incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'identifierMark', 'personalConnection', 'encryptedNationalId', 'nationalIdLast4', 'phone', 'email', 'address', 'city', 'lat', 'lng', 'significantDatesJson', 'interactionsJson', 'nextActionText', 'nextActionDate', 'attachmentsJson', 'updatedAt', 'deletedAt'])
+          incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'identifierMark', 'personalConnection', 'encryptedNationalId', 'nationalIdLast4', 'phone', 'email', 'address', 'city', 'lat', 'lng', 'significantDatesJson', 'interactionsJson', 'nextActionText', 'nextActionDate', 'attachmentsJson', 'tagsJson', 'updatedAt', 'deletedAt'])
         );
       allow delete: if isAdmin() && isValidId(donorId);
     }

@@ -15,6 +15,9 @@ import {
   RefreshCw,
   CheckCircle2,
   AlertCircle,
+  Tag,
+  Filter,
+  X,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import {
@@ -53,6 +56,31 @@ interface CrmDonorsViewProps {
   onSaveCommunityEntity: (
     data: Omit<VolunteerEntityRecord, 'id' | 'createdAt' | 'updatedAt'>
   ) => Promise<void>;
+}
+
+const DEFAULT_CRM_TAGS = [
+  'תורמים',
+  'תושבי השכונה',
+  'חבדניקים',
+  'מתפללי בית הכנסת',
+  'משתתפי שיעורים',
+  'בעלי עסקים',
+  'ידידי בית חב״ד',
+];
+
+const CUSTOM_TAGS_STORAGE_KEY = 'chabad_erp_custom_crm_tags_v1';
+
+function parseDonorTags(tagsJson?: string): string[] {
+  if (!tagsJson) return [];
+  try {
+    const parsed = JSON.parse(tagsJson);
+    if (Array.isArray(parsed)) {
+      return parsed.map((x) => String(x).trim()).filter(Boolean);
+    }
+  } catch {
+    // ignore
+  }
+  return [];
 }
 
 export const CrmDonorsView: React.FC<CrmDonorsViewProps> = ({
@@ -94,6 +122,81 @@ export const CrmDonorsView: React.FC<CrmDonorsViewProps> = ({
   const [nextActionDate, setNextActionDate] = useState('');
   const [sigTitle, setSigTitle] = useState('יום הולדת');
   const [sigTriplet, setSigTriplet] = useState<HebrewDateTriplet | null>(null);
+  const [newDonorTags, setNewDonorTags] = useState<string[]>(['תושבי השכונה']);
+
+  // Tags & Advanced Tag Filtering State
+  const [customTags, setCustomTags] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem(CUSTOM_TAGS_STORAGE_KEY);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [newCustomTagInput, setNewCustomTagInput] = useState('');
+  const [cardNewTagInput, setCardNewTagInput] = useState('');
+  const [selectedFilterTags, setSelectedFilterTags] = useState<string[]>([]);
+  const [tagFilterMode, setTagFilterMode] = useState<'any' | 'all' | 'min_count' | 'exact_count'>('any');
+  const [tagFilterCount, setTagFilterCount] = useState<number>(2);
+
+  const allAvailableTags = Array.from(
+    new Set([
+      ...DEFAULT_CRM_TAGS,
+      ...customTags,
+      ...donors.flatMap((d) => parseDonorTags(d.tagsJson)),
+    ])
+  );
+
+  const handleAddCustomTagToList = (tagText: string) => {
+    const clean = tagText.trim();
+    if (!clean) return;
+    if (!allAvailableTags.includes(clean)) {
+      const updated = [...customTags, clean];
+      setCustomTags(updated);
+      try {
+        localStorage.setItem(CUSTOM_TAGS_STORAGE_KEY, JSON.stringify(updated));
+      } catch {
+        // ignore
+      }
+    }
+    setNewCustomTagInput('');
+  };
+
+  const handleToggleFilterTag = (tag: string) => {
+    setSelectedFilterTags((prev) =>
+      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
+    );
+  };
+
+  const handleToggleDonorTag = async (donor: DonorContactRecord, tag: string) => {
+    if (!canWriteCrm) return;
+    const current = parseDonorTags(donor.tagsJson);
+    const exists = current.includes(tag);
+    const nextTags = exists ? current.filter((t) => t !== tag) : [...current, tag];
+
+    await onSaveDonor(
+      {
+        fullName: donor.fullName,
+        identifierMark: donor.identifierMark,
+        personalConnection: donor.personalConnection,
+        encryptedNationalId: donor.encryptedNationalId,
+        nationalIdLast4: donor.nationalIdLast4,
+        phone: donor.phone,
+        email: donor.email,
+        address: donor.address,
+        city: donor.city,
+        lat: donor.lat,
+        lng: donor.lng,
+        significantDatesJson: donor.significantDatesJson,
+        interactionsJson: donor.interactionsJson,
+        nextActionText: donor.nextActionText,
+        nextActionDate: donor.nextActionDate,
+        attachmentsJson: donor.attachmentsJson,
+        tagsJson: JSON.stringify(nextTags),
+      },
+      donor.id
+    );
+  };
 
   // Interaction log state
   const [interactionType, setInteractionType] = useState<'home_visit' | 'phone_call' | 'meeting'>('home_visit');
@@ -116,6 +219,22 @@ export const CrmDonorsView: React.FC<CrmDonorsViewProps> = ({
 
   const activeDonors = allActiveDonors.filter((d) => {
     if (filterNextActionOnly && !d.nextActionText) return false;
+
+    const donorTags = parseDonorTags(d.tagsJson);
+
+    // סינון לפי תוויות שנבחרו או לפי מספר תוויות
+    if (selectedFilterTags.length > 0) {
+      const matchedCount = selectedFilterTags.filter((t) => donorTags.includes(t)).length;
+      if (tagFilterMode === 'any' && matchedCount === 0) return false;
+      if (tagFilterMode === 'all' && matchedCount < selectedFilterTags.length) return false;
+      if (tagFilterMode === 'min_count' && matchedCount < tagFilterCount) return false;
+      if (tagFilterMode === 'exact_count' && matchedCount !== tagFilterCount) return false;
+    } else if (tagFilterMode === 'min_count') {
+      if (donorTags.length < tagFilterCount) return false;
+    } else if (tagFilterMode === 'exact_count') {
+      if (donorTags.length !== tagFilterCount) return false;
+    }
+
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       return (
@@ -123,7 +242,8 @@ export const CrmDonorsView: React.FC<CrmDonorsViewProps> = ({
         d.identifierMark.toLowerCase().includes(q) ||
         d.personalConnection.toLowerCase().includes(q) ||
         d.address.toLowerCase().includes(q) ||
-        d.phone.includes(q)
+        d.phone.includes(q) ||
+        donorTags.some((t) => t.toLowerCase().includes(q))
       );
     }
     return true;
@@ -155,6 +275,7 @@ export const CrmDonorsView: React.FC<CrmDonorsViewProps> = ({
       'עיר': d.city || 'חיפה',
       'סימן זיהוי': d.identifierMark,
       'קשר פרטי': d.personalConnection,
+      'תוויות': parseDonorTags(d.tagsJson).join(', '),
       '4 ספרות אחרונות ת.ז.': d.nationalIdLast4,
       'הפעולה הבאה': d.nextActionText || '',
       'תאריך הפעולה הבאה': d.nextActionDate || '',
@@ -213,6 +334,14 @@ export const CrmDonorsView: React.FC<CrmDonorsViewProps> = ({
         ).trim();
         const last4 = rawId.slice(-4).padStart(4, '0');
 
+        const rawTags = String(row['תוויות'] || row['Tags'] || '').trim();
+        const parsedRowTags = rawTags
+          ? rawTags
+              .split(',')
+              .map((t) => t.trim())
+              .filter(Boolean)
+          : ['תושבי השכונה'];
+
         await onSaveDonor({
           fullName: name,
           identifierMark: idMarkVal,
@@ -229,6 +358,7 @@ export const CrmDonorsView: React.FC<CrmDonorsViewProps> = ({
           interactionsJson: JSON.stringify([]),
           nextActionText: String(row['הפעולה הבאה'] || '').trim() || undefined,
           attachmentsJson: JSON.stringify([]),
+          tagsJson: JSON.stringify(parsedRowTags),
         });
         importedCount++;
       }
@@ -451,6 +581,7 @@ export const CrmDonorsView: React.FC<CrmDonorsViewProps> = ({
       nextActionText: nextActionText.trim(),
       nextActionDate: nextActionDate || undefined,
       attachmentsJson: JSON.stringify([]),
+      tagsJson: JSON.stringify(newDonorTags),
     });
 
     setFullName('');
@@ -462,6 +593,7 @@ export const CrmDonorsView: React.FC<CrmDonorsViewProps> = ({
     setNextActionText('');
     setNextActionDate('');
     setSigTriplet(null);
+    setNewDonorTags(['תושבי השכונה']);
     setShowDonorForm(false);
   };
 
@@ -502,6 +634,7 @@ export const CrmDonorsView: React.FC<CrmDonorsViewProps> = ({
         nextActionText: selectedDonor.nextActionText,
         nextActionDate: selectedDonor.nextActionDate,
         attachmentsJson: selectedDonor.attachmentsJson,
+        tagsJson: selectedDonor.tagsJson,
       },
       selectedDonor.id
     );
@@ -830,6 +963,60 @@ export const CrmDonorsView: React.FC<CrmDonorsViewProps> = ({
                     onClear={() => setNextActionDate('')}
                   />
                 </div>
+                <div className="md:col-span-3 pt-2 border-t border-slate-100">
+                  <label className="block text-xs font-semibold text-slate-700 mb-2">
+                    תוויות שיוך לאיש הקשר (למשל: &quot;תורמים&quot;, &quot;תושבי השכונה&quot;, &quot;חבדניקים&quot; ועוד):
+                  </label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {allAvailableTags.map((tag) => {
+                      const active = newDonorTags.includes(tag);
+                      return (
+                        <button
+                          key={tag}
+                          type="button"
+                          onClick={() =>
+                            setNewDonorTags((prev) =>
+                              prev.includes(tag)
+                                ? prev.filter((t) => t !== tag)
+                                : [...prev, tag]
+                            )
+                          }
+                          className={`px-3 py-1 rounded-lg text-xs font-semibold border transition-colors flex items-center gap-1 ${
+                            active
+                              ? 'bg-slate-900 text-white border-slate-900'
+                              : 'bg-slate-50 text-slate-700 border-slate-300 hover:bg-slate-100'
+                          }`}
+                        >
+                          <Tag className="w-3 h-3" />
+                          <span>{tag}</span>
+                        </button>
+                      );
+                    })}
+                    <div className="flex items-center gap-1 mr-2">
+                      <input
+                        type="text"
+                        value={newCustomTagInput}
+                        onChange={(e) => setNewCustomTagInput(e.target.value)}
+                        placeholder="תווית חדשה..."
+                        className="px-2.5 py-1 text-xs border border-slate-300 rounded-lg w-32"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const clean = newCustomTagInput.trim();
+                          if (!clean) return;
+                          handleAddCustomTagToList(clean);
+                          if (!newDonorTags.includes(clean)) {
+                            setNewDonorTags((prev) => [...prev, clean]);
+                          }
+                        }}
+                        className="px-2.5 py-1 text-xs font-bold bg-slate-200 hover:bg-slate-300 text-slate-900 rounded-lg"
+                      >
+                        + הוסף תווית
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
               <div className="flex justify-end gap-2">
                 <button
@@ -848,6 +1035,157 @@ export const CrmDonorsView: React.FC<CrmDonorsViewProps> = ({
               </div>
             </form>
           )}
+
+          {/* מערכת סינון מתקדמת לפי תוויות (תורמים, תושבי השכונה, חבדניקים ותוויות מותאמות אישית) */}
+          <div className="bg-white border border-slate-300/90 rounded-xl p-4 space-y-3 shadow-xs">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-2.5">
+              <div className="flex items-center gap-2">
+                <Filter className="w-4 h-4 text-blue-800" />
+                <h3 className="text-sm font-bold text-slate-900">
+                  סינון אנשי קשר לפי תוויות (&quot;תורמים&quot;, &quot;תושבי השכונה&quot;, &quot;חבדניקים&quot; ועוד)
+                </h3>
+              </div>
+
+              {/* הוספת תווית חדשה לרשימה לבד */}
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  value={newCustomTagInput}
+                  onChange={(e) => setNewCustomTagInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddCustomTagToList(newCustomTagInput);
+                    }
+                  }}
+                  placeholder="הוסף תווית חדשה לרשימה..."
+                  className="px-2.5 py-1 text-xs border border-slate-300 rounded-lg bg-slate-50 focus:bg-white w-44"
+                />
+                <button
+                  type="button"
+                  onClick={() => handleAddCustomTagToList(newCustomTagInput)}
+                  className="px-2.5 py-1 bg-slate-900 text-white text-xs font-semibold rounded-lg hover:bg-slate-800 flex items-center gap-1"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>הוסף תווית</span>
+                </button>
+              </div>
+            </div>
+
+            {/* כפתורי בחירת תוויות לסינון (תווית אחת או יותר) */}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold text-slate-600 ml-1">בחר תוויות לסינון:</span>
+              {allAvailableTags.map((tag) => {
+                const isSelected = selectedFilterTags.includes(tag);
+                const countWithTag = allActiveDonors.filter((d) =>
+                  parseDonorTags(d.tagsJson).includes(tag)
+                ).length;
+
+                return (
+                  <button
+                    key={tag}
+                    type="button"
+                    onClick={() => handleToggleFilterTag(tag)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all flex items-center gap-1.5 ${
+                      isSelected
+                        ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
+                        : 'bg-slate-50 text-slate-800 border-slate-300 hover:bg-slate-100'
+                    }`}
+                  >
+                    <Tag className="w-3.5 h-3.5" />
+                    <span>{tag}</span>
+                    <span
+                      className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${
+                        isSelected ? 'bg-slate-700 text-amber-300' : 'bg-slate-200 text-slate-700'
+                      }`}
+                    >
+                      {countWithTag}
+                    </span>
+                  </button>
+                );
+              })}
+
+              {selectedFilterTags.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedFilterTags([]);
+                    setTagFilterMode('any');
+                  }}
+                  className="px-2.5 py-1 text-xs font-semibold text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg flex items-center gap-1"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  <span>נקה סינון תוויות</span>
+                </button>
+              )}
+            </div>
+
+            {/* בחירת אופן הסינון: אחת מהתוויות / כל התוויות שנבחרו / מספר תוויות שייבחר */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100 text-xs">
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="font-bold text-slate-700">תנאי התאמת תוויות:</span>
+
+                <label className="inline-flex items-center gap-1.5 cursor-pointer font-medium text-slate-800">
+                  <input
+                    type="radio"
+                    name="tagFilterMode"
+                    checked={tagFilterMode === 'any'}
+                    onChange={() => setTagFilterMode('any')}
+                  />
+                  <span>כל מי שיש לו אחת מהתוויות שנבחרו (לפחות אחת)</span>
+                </label>
+
+                <label className="inline-flex items-center gap-1.5 cursor-pointer font-medium text-slate-800">
+                  <input
+                    type="radio"
+                    name="tagFilterMode"
+                    checked={tagFilterMode === 'all'}
+                    onChange={() => setTagFilterMode('all')}
+                  />
+                  <span>רק מי שיש לו את כל התוויות שנבחרו</span>
+                </label>
+
+                <label className="inline-flex items-center gap-1.5 cursor-pointer font-medium text-slate-800">
+                  <input
+                    type="radio"
+                    name="tagFilterMode"
+                    checked={tagFilterMode === 'min_count'}
+                    onChange={() => setTagFilterMode('min_count')}
+                  />
+                  <span>לפחות מספר תוויות נבחר:</span>
+                </label>
+
+                <label className="inline-flex items-center gap-1.5 cursor-pointer font-medium text-slate-800">
+                  <input
+                    type="radio"
+                    name="tagFilterMode"
+                    checked={tagFilterMode === 'exact_count'}
+                    onChange={() => setTagFilterMode('exact_count')}
+                  />
+                  <span>בדיוק מספר תוויות נבחר:</span>
+                </label>
+
+                {(tagFilterMode === 'min_count' || tagFilterMode === 'exact_count') && (
+                  <div className="inline-flex items-center gap-1.5 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-300">
+                    <span className="font-semibold text-slate-700">מספר תוויות:</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={Math.max(1, allAvailableTags.length)}
+                      value={tagFilterCount}
+                      onChange={(e) => setTagFilterCount(Math.max(1, Number(e.target.value) || 1))}
+                      className="w-14 px-2 py-0.5 text-xs font-mono font-bold border border-slate-300 rounded bg-white text-center"
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="text-slate-600 font-semibold">
+                מוצגים כעת: <strong className="text-slate-900">{activeDonors.length}</strong> מתוך{' '}
+                {allActiveDonors.length} אנשי קשר
+              </div>
+            </div>
+          </div>
 
           {/* סרגל חיפוש ותצוגת טבלה רחבה / תצוגת כרטיס מפורט */}
           <div className="bg-white border border-slate-300/80 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
@@ -932,6 +1270,16 @@ export const CrmDonorsView: React.FC<CrmDonorsViewProps> = ({
                           </div>
                           <div className="text-xs text-slate-700 mt-1 leading-relaxed">
                             <strong>קשר אישי:</strong> {d.personalConnection}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1 mt-1.5">
+                            {parseDonorTags(d.tagsJson).map((t) => (
+                              <span
+                                key={t}
+                                className="px-2 py-0.5 text-[11px] font-semibold bg-slate-100 text-slate-800 border border-slate-300 rounded-md"
+                              >
+                                {t}
+                              </span>
+                            ))}
                           </div>
                         </td>
                         <td className="py-3.5 px-5 col-text-medium align-top text-xs">
@@ -1027,6 +1375,22 @@ export const CrmDonorsView: React.FC<CrmDonorsViewProps> = ({
                       <div className={`text-xs mt-0.5 ${isSelected ? 'text-slate-300' : 'text-slate-600'}`}>
                         {d.identifierMark}
                       </div>
+                      {parseDonorTags(d.tagsJson).length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {parseDonorTags(d.tagsJson).map((t) => (
+                            <span
+                              key={t}
+                              className={`px-1.5 py-0.5 text-[10px] font-semibold rounded border ${
+                                isSelected
+                                  ? 'bg-slate-800 text-amber-300 border-slate-700'
+                                  : 'bg-slate-100 text-slate-700 border-slate-200'
+                              }`}
+                            >
+                              {t}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                       <div className={`text-xs mt-1 font-mono ${isSelected ? 'text-slate-300' : 'text-slate-500'}`}>
                         {d.phone} · {d.address}
                       </div>
@@ -1058,6 +1422,59 @@ export const CrmDonorsView: React.FC<CrmDonorsViewProps> = ({
                       <p className="text-xs text-slate-500 mt-0.5">
                         <strong>קשר פרטי:</strong> {selectedDonor.personalConnection}
                       </p>
+                      {/* ניהול ושיוך תוויות לאיש הקשר הנבחר */}
+                      <div className="mt-3 space-y-2">
+                        <div className="text-xs font-bold text-slate-700 flex items-center gap-1">
+                          <Tag className="w-3.5 h-3.5 text-blue-800" />
+                          <span>תוויות משויכות (לחץ להוספה/הסרה):</span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {allAvailableTags.map((tag) => {
+                            const hasTag = parseDonorTags(selectedDonor.tagsJson).includes(tag);
+                            return (
+                              <button
+                                key={tag}
+                                type="button"
+                                disabled={!canWriteCrm}
+                                onClick={() => handleToggleDonorTag(selectedDonor, tag)}
+                                className={`px-2.5 py-1 rounded-md text-xs font-semibold border transition-colors ${
+                                  hasTag
+                                    ? 'bg-slate-900 text-white border-slate-900'
+                                    : 'bg-slate-50 text-slate-600 border-slate-200 hover:border-slate-400'
+                                }`}
+                              >
+                                {hasTag ? `✓ ${tag}` : `+ ${tag}`}
+                              </button>
+                            );
+                          })}
+                          {canWriteCrm && (
+                            <div className="inline-flex items-center gap-1">
+                              <input
+                                type="text"
+                                value={cardNewTagInput}
+                                onChange={(e) => setCardNewTagInput(e.target.value)}
+                                placeholder="תווית חדשה..."
+                                className="px-2 py-1 text-xs border border-slate-300 rounded-md w-28"
+                              />
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  const clean = cardNewTagInput.trim();
+                                  if (!clean) return;
+                                  handleAddCustomTagToList(clean);
+                                  setCardNewTagInput('');
+                                  if (!parseDonorTags(selectedDonor.tagsJson).includes(clean)) {
+                                    await handleToggleDonorTag(selectedDonor, clean);
+                                  }
+                                }}
+                                className="px-2 py-1 text-xs font-bold bg-slate-200 hover:bg-slate-300 text-slate-900 rounded-md"
+                              >
+                                +
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
                     </div>
 
                     <div className="flex items-center gap-3">
@@ -1226,6 +1643,7 @@ export const CrmDonorsView: React.FC<CrmDonorsViewProps> = ({
                                   nextActionText: selectedDonor.nextActionText,
                                   nextActionDate: selectedDonor.nextActionDate,
                                   attachmentsJson: selectedDonor.attachmentsJson,
+                                  tagsJson: selectedDonor.tagsJson,
                                 },
                                 selectedDonor.id
                               );
@@ -1292,6 +1710,7 @@ export const CrmDonorsView: React.FC<CrmDonorsViewProps> = ({
                                         nextActionText: selectedDonor.nextActionText,
                                         nextActionDate: selectedDonor.nextActionDate,
                                         attachmentsJson: selectedDonor.attachmentsJson,
+                                        tagsJson: selectedDonor.tagsJson,
                                       },
                                       selectedDonor.id
                                     );

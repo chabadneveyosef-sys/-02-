@@ -231,13 +231,16 @@ export function compareHebrewDates(a: HebrewDateTriplet, b: HebrewDateTriplet): 
  */
 export type ActivityComputedStatus = 'blue' | 'red' | 'green';
 
-export function computeAnnualActivityStatus(activity: {
-  title?: string;
-  responsiblePerson?: string;
-  locationName?: string;
-  estimatedBudgetAgorot?: number;
-  isExecuted?: boolean;
-}): ActivityComputedStatus {
+export function computeAnnualActivityStatus(
+  activity: {
+    title?: string;
+    responsiblePerson?: string;
+    locationName?: string;
+    estimatedBudgetAgorot?: number;
+    isExecuted?: boolean;
+  },
+  subtasksCount?: number
+): ActivityComputedStatus {
   if (activity.isExecuted) {
     return 'blue';
   }
@@ -245,11 +248,47 @@ export function computeAnnualActivityStatus(activity: {
   const hasResponsible = Boolean(activity.responsiblePerson && activity.responsiblePerson.trim().length > 0);
   const hasLocation = Boolean(activity.locationName && activity.locationName.trim().length > 0);
   const hasBudget = typeof activity.estimatedBudgetAgorot === 'number' && activity.estimatedBudgetAgorot > 0;
+  const hasSubtasks = subtasksCount !== undefined && subtasksCount > 0;
 
-  if (!hasTitle || !hasResponsible || !hasLocation || !hasBudget) {
+  if (!hasTitle) {
     return 'red';
   }
-  return 'green';
+  if ((hasResponsible && hasLocation && hasBudget) || (hasSubtasks && (hasResponsible || hasLocation || hasBudget))) {
+    return 'green';
+  }
+  return 'red';
+}
+
+/**
+ * חישוב סטטוס צבעוני למשימה או פרויקט:
+ * - blue (כחול): הושלם (isCompleted === true)
+ * - green (ירוק): הוגדרו פרטי עריכה (תאריך ביצוע / תתי-משימות / אחראי / מטרה)
+ * - red (אדום): הוזנה רק כותרת ראשונית וטרם הושלמה העריכה (תאריך/תתי-משימות)
+ */
+export function computeTaskReadinessStatus(
+  task: {
+    title?: string;
+    targetDate?: string;
+    assignee?: string;
+    strategicGoal?: string;
+    isCompleted?: boolean;
+  },
+  subtasksCount: number = 0
+): ActivityComputedStatus {
+  if (task.isCompleted) {
+    return 'blue';
+  }
+  const hasTargetDate = Boolean(task.targetDate && task.targetDate.trim().length > 0);
+  const hasSubtasks = subtasksCount > 0;
+  const hasDetails = Boolean(
+    (task.assignee && task.assignee.trim().length > 0) ||
+      (task.strategicGoal && task.strategicGoal.trim().length > 0)
+  );
+
+  if (hasTargetDate || hasSubtasks || (hasDetails && hasTargetDate)) {
+    return 'green';
+  }
+  return 'red';
 }
 
 // ============================================================================

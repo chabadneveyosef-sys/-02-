@@ -366,7 +366,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
           <div className="grid grid-cols-2 gap-2.5">
             {activeActivities.slice(0, 8).map((act) => {
-              const status = computeAnnualActivityStatus(act);
+              const subCount = activeTasks.filter((t) => t.parentId === act.id).length;
+              const status = computeAnnualActivityStatus(act, subCount);
               return (
                 <div
                   key={act.id}

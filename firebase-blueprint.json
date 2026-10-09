@@ -90,6 +90,8 @@
         "dependsOnIdsJson": { "type": "string", "maxLength": 1000 },
         "reminderDate": { "type": "string", "maxLength": 40 },
         "reminderEmail": { "type": "string", "maxLength": 150 },
+        "reminderDaysBefore": { "type": "number" },
+        "reminderChannelsJson": { "type": "string", "maxLength": 500 },
         "createdAt": { "type": "string", "maxLength": 40 },
         "updatedAt": { "type": "string", "maxLength": 40 },
         "deletedAt": { "type": "string", "maxLength": 40 }
@@ -160,6 +162,7 @@
         "nextActionText": { "type": "string", "maxLength": 250 },
         "nextActionDate": { "type": "string", "maxLength": 40 },
         "attachmentsJson": { "type": "string", "maxLength": 2000 },
+        "tagsJson": { "type": "string", "maxLength": 2000 },
         "createdAt": { "type": "string", "maxLength": 40 },
         "updatedAt": { "type": "string", "maxLength": 40 },
         "deletedAt": { "type": "string", "maxLength": 40 }

@@ -15,6 +15,7 @@ import {
   Calendar,
   ChevronDown,
   ChevronUp,
+  Edit3,
 } from 'lucide-react';
 import { TaskNodeRecord, ReminderChannel } from '../types/erp';
 import {
@@ -22,6 +23,7 @@ import {
   wouldCreateCycle,
   DagTaskInput,
   fromGregorianDate,
+  computeTaskReadinessStatus,
 } from '../lib/erp-core';
 import { HebrewDatePicker } from './HebrewDatePicker';
 
@@ -76,6 +78,7 @@ export const TasksDagView: React.FC<TasksDagViewProps> = ({
   onSoftDeleteTask,
 }) => {
   const [showForm, setShowForm] = useState(false);
+  const [editingTaskId, setEditingTaskId] = useState<string | undefined>(undefined);
   const [taskDisplayMode, setTaskDisplayMode] = useState<'two_columns' | 'table'>('two_columns');
   const [taskSideFilter, setTaskSideFilter] = useState<string>('all'); // 'all' | 'open' | 'completed' | 'critical' | rootTaskId
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -273,39 +276,102 @@ export const TasksDagView: React.FC<TasksDagViewProps> = ({
     );
   };
 
+  const openNewTaskForm = () => {
+    setEditingTaskId(undefined);
+    setTitle('');
+    setParentId('');
+    setTargetDate('');
+    setStrategicGoal('');
+    setSuccessCriteria('');
+    setDurationDays('3');
+    setAssignee('');
+    setSelectedDeps([]);
+    setReminderDaysBefore(2);
+    setReminderEmail('chabadneveyosef@gmail.com');
+    setSelectedChannels(['email', 'desktop', 'dashboard', 'mobile']);
+    setShowForm(true);
+  };
+
+  const openEditTaskForm = (task: TaskNodeRecord) => {
+    setEditingTaskId(task.id);
+    setTitle(task.title);
+    setParentId(task.parentId || '');
+    setTargetDate(task.targetDate || '');
+    setStrategicGoal(task.strategicGoal || '');
+    setSuccessCriteria(task.successCriteria || '');
+    setDurationDays(String(task.durationDays || 3));
+    setAssignee(task.assignee || '');
+    try {
+      setSelectedDeps(JSON.parse(task.dependsOnIdsJson || '[]'));
+    } catch {
+      setSelectedDeps([]);
+    }
+    setReminderDaysBefore(task.reminderDaysBefore ?? 2);
+    setReminderEmail(task.reminderEmail || 'chabadneveyosef@gmail.com');
+    setSelectedChannels(parseTaskChannels(task.reminderChannelsJson));
+    setShowForm(true);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim() || !canWrite) return;
 
-    const autoIsProject = !targetDate || targetDate.trim() === '';
-    const hebStr = targetDate
-      ? fromGregorianDate(targetDate).hebrewDisplay
-      : 'פרויקט מתמשך (ללא תאריך יעד)';
-    const preReminder = computePreReminderDate(targetDate || undefined, reminderDaysBefore);
+    if (!editingTaskId) {
+      // שלב א׳: הוספת כותרת בלבד (סטטוס אדום — להשלמה בלחיצה על כפתור העריכה)
+      await onSaveTask({
+        title: title.trim(),
+        parentId: undefined,
+        targetDate: undefined,
+        hebrewDateStr: 'טרם הוגדר תאריך (לחץ עריכה להשלמה)',
+        isProject: true,
+        strategicGoal: '',
+        successCriteria: '',
+        durationDays: 1,
+        isCompleted: false,
+        assignee: '',
+        dependsOnIdsJson: JSON.stringify([]),
+        reminderDate: undefined,
+        reminderEmail: 'chabadneveyosef@gmail.com',
+        reminderDaysBefore: 2,
+        reminderChannelsJson: JSON.stringify(['email', 'desktop', 'dashboard', 'mobile']),
+      });
+    } else {
+      // שלב ב׳: שמירת עריכה מלאה (תאריך, תתי-משימות ופרטים שהופכים את המשימה לירוקה)
+      const existing = activeTasks.find((t) => t.id === editingTaskId);
+      const autoIsProject = !targetDate || targetDate.trim() === '';
+      const hebStr = targetDate
+        ? fromGregorianDate(targetDate).hebrewDisplay
+        : 'פרויקט מתמשך (ללא תאריך יעד)';
+      const preReminder = computePreReminderDate(targetDate || undefined, reminderDaysBefore);
 
-    await onSaveTask({
-      title: title.trim(),
-      parentId: parentId || undefined,
-      targetDate: targetDate || undefined,
-      hebrewDateStr: hebStr,
-      isProject: autoIsProject,
-      strategicGoal: strategicGoal.trim(),
-      successCriteria: successCriteria.trim(),
-      durationDays: Math.max(1, Number(durationDays) || 1),
-      isCompleted: false,
-      assignee: assignee.trim(),
-      dependsOnIdsJson: JSON.stringify(selectedDeps),
-      reminderDate: preReminder,
-      reminderEmail: reminderEmail.trim() || undefined,
-      reminderDaysBefore,
-      reminderChannelsJson: JSON.stringify(selectedChannels),
-    });
+      await onSaveTask(
+        {
+          title: title.trim(),
+          parentId: parentId || undefined,
+          targetDate: targetDate || undefined,
+          hebrewDateStr: hebStr,
+          isProject: autoIsProject,
+          strategicGoal: strategicGoal.trim(),
+          successCriteria: successCriteria.trim(),
+          durationDays: Math.max(1, Number(durationDays) || 1),
+          isCompleted: existing ? existing.isCompleted : false,
+          assignee: assignee.trim(),
+          dependsOnIdsJson: JSON.stringify(selectedDeps),
+          reminderDate: preReminder,
+          reminderEmail: reminderEmail.trim() || undefined,
+          reminderDaysBefore,
+          reminderChannelsJson: JSON.stringify(selectedChannels),
+        },
+        editingTaskId
+      );
+    }
 
     setTitle('');
     setTargetDate('');
     setStrategicGoal('');
     setSuccessCriteria('');
     setSelectedDeps([]);
+    setEditingTaskId(undefined);
     setShowForm(false);
   };
 
@@ -771,7 +837,7 @@ export const TasksDagView: React.FC<TasksDagViewProps> = ({
           {canWrite && (
             <button
               type="button"
-              onClick={() => setShowForm(!showForm)}
+              onClick={openNewTaskForm}
               className="px-4 py-2 bg-slate-900 text-white text-xs font-semibold rounded-lg hover:bg-slate-800 flex items-center gap-1.5 whitespace-nowrap"
             >
               <Plus className="w-4 h-4" />
@@ -891,175 +957,242 @@ export const TasksDagView: React.FC<TasksDagViewProps> = ({
       {showForm && canWrite && (
         <form
           onSubmit={handleSubmit}
-          className="bg-white border border-slate-200 rounded-xl p-6 space-y-4"
+          className="bg-white border border-slate-200 rounded-xl p-6 space-y-4 shadow-xs"
         >
-          <h3 className="text-base font-bold text-slate-900 border-b border-slate-100 pb-2">
-            יצירת משימה או פרויקט חדש (השאר תאריך ביצוע ריק להגדרה אוטומטית כפרויקט)
-          </h3>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="md:col-span-2">
-              <label className="block text-xs font-semibold text-slate-700 mb-1">כותרת המשימה / הפרויקט *</label>
-              <input
-                type="text"
-                required
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="למשל: הפקת חוברת לימוד או סגירת אולם"
-                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
-              />
-            </div>
-
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <div>
-              <HebrewDatePicker
-                allowClear
-                clearLabel="ללא תאריך (פרויקט מתמשך)"
-                label="תאריך ביצוע למשימה הספציפית (לוח עברי — ללא תאריך = פרויקט)"
-                value={targetDate ? fromGregorianDate(targetDate).triplet : null}
-                onChange={(_tr, conv) => setTargetDate(conv.gregorianIso)}
-                onClear={() => setTargetDate('')}
-              />
+              <h3 className="text-base font-bold text-slate-900">
+                {editingTaskId
+                  ? 'שלב ב׳: עריכת משימה / פרויקט — הוספת תאריך, תתי-משימות ופרטים כדי להפוך לירוקה'
+                  : 'שלב א׳: הוספת משימה או פרויקט חדש (כותרת בלבד)'}
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                {editingTaskId
+                  ? 'הגדר תאריך ביצוע, תתי-משימות, אחראי או תלויות כדי שהמשימה תהפוך מאדומה לירוקה.'
+                  : 'בהוספת משימה מוסיפים תחילה רק את הכותרת (המשימה תופיע כ"אדומה"). לאחר מכן ניתן ללחוץ על כפתור העריכה בכרטיס כדי להוסיף תתי-משימות, תאריך ועוד — כדי שתהפוך לירוקה.'}
+              </p>
             </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">שיוך למשימת אב / פרויקט (עץ משימות)</label>
-              <select
-                value={parentId}
-                onChange={(e) => setParentId(e.target.value)}
-                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white"
-              >
-                <option value="">ללא משימת אב (רמה ראשית בעץ)</option>
-                {activeTasks.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.title}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">משך ביצוע בימים (ל-CPM) *</label>
-              <input
-                type="number"
-                min="1"
-                max="365"
-                value={durationDays}
-                onChange={(e) => setDurationDays(e.target.value)}
-                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg font-mono tabular-nums"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">אחראי ביצוע</label>
-              <input
-                type="text"
-                value={assignee}
-                onChange={(e) => setAssignee(e.target.value)}
-                placeholder="שם השליח / המתנדב"
-                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
-              />
-            </div>
-
-            <div className="md:col-span-2">
-              <label className="block text-xs font-semibold text-slate-700 mb-1">מהות ומטרה אסטרטגית</label>
-              <input
-                type="text"
-                value={strategicGoal}
-                onChange={(e) => setStrategicGoal(e.target.value)}
-                placeholder="למשל: חיזוק הקשר האישי עם תושבי השכונה..."
-                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">מבחן הצלחה כמותי/ברור</label>
-              <input
-                type="text"
-                value={successCriteria}
-                onChange={(e) => setSuccessCriteria(e.target.value)}
-                placeholder="למשל: 150 משתתפים רשומים"
-                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-slate-100">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                תלויות קודמות (משימות שחייבות להסתיים לפני תחילת משימה זו):
-              </label>
-              <div className="max-h-28 overflow-y-auto border border-slate-200 rounded-lg p-2 space-y-1">
-                {activeTasks.map((t) => (
-                  <label key={t.id} className="flex items-center gap-2 text-xs text-slate-700">
-                    <input
-                      type="checkbox"
-                      checked={selectedDeps.includes(t.id)}
-                      onChange={() => handleToggleDependency(t.id)}
-                    />
-                    <span>{t.title} ({t.durationDays} ימים)</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="block text-xs font-semibold text-slate-700">
-                הגדרות תזכורת בתאריך הביצוע ולפניו (במייל / שולחן העבודה / דשבורד / פלאפון)
-              </label>
-              <div className="grid grid-cols-2 gap-2">
-                <select
-                  value={reminderDaysBefore}
-                  onChange={(e) => setReminderDaysBefore(Number(e.target.value))}
-                  className="px-3 py-1.5 text-xs border border-slate-300 rounded-lg bg-white"
-                >
-                  <option value={0}>ביום הביצוע בלבד</option>
-                  <option value={1}>יום לפני + ביום הביצוע</option>
-                  <option value={2}>יומיים לפני + ביום הביצוע</option>
-                  <option value={3}>3 ימים לפני + ביום הביצוע</option>
-                  <option value={7}>שבוע לפני + ביום הביצוע</option>
-                </select>
-                <input
-                  type="email"
-                  value={reminderEmail}
-                  onChange={(e) => setReminderEmail(e.target.value)}
-                  placeholder="אימייל לתזכורת..."
-                  className="px-3 py-1.5 text-xs border border-slate-300 rounded-lg"
-                />
-              </div>
-              <div className="flex flex-wrap items-center gap-3 pt-1 text-xs text-slate-700">
-                {ALL_CHANNELS.map((ch) => (
-                  <label key={ch} className="inline-flex items-center gap-1.5 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={selectedChannels.includes(ch)}
-                      onChange={() =>
-                        setSelectedChannels((prev) =>
-                          prev.includes(ch) ? prev.filter((x) => x !== ch) : [...prev, ch]
-                        )
-                      }
-                    />
-                    <span>{CHANNEL_META[ch].label}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="flex justify-end gap-2 pt-3">
             <button
               type="button"
-              onClick={() => setShowForm(false)}
-              className="px-4 py-2 text-xs font-medium text-slate-600"
+              onClick={() => {
+                setShowForm(false);
+                setEditingTaskId(undefined);
+              }}
+              className="text-xs text-slate-500 hover:text-slate-900"
             >
-              ביטול
-            </button>
-            <button
-              type="submit"
-              className="px-5 py-2 bg-slate-900 text-white text-xs font-semibold rounded-lg hover:bg-slate-800"
-            >
-              שמור משימה / פרויקט
+              ביטול ✕
             </button>
           </div>
+
+          {!editingTaskId ? (
+            /* מצב הוספה ראשונית: כותרת בלבד */
+            <div className="flex flex-wrap items-end gap-3 pt-1">
+              <div className="flex-1 min-w-[260px]">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  כותרת המשימה / הפרויקט *
+                </label>
+                <input
+                  type="text"
+                  required
+                  autoFocus
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="הקלד רק את כותרת המשימה או הפרויקט..."
+                  className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-lg"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowForm(false)}
+                  className="px-4 py-2 text-xs font-medium text-slate-600"
+                >
+                  ביטול
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-slate-900 text-white text-xs font-semibold rounded-lg hover:bg-slate-800 flex items-center gap-1.5"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>הוסף כותרת משימה (אדום — להשלמה בעריכה)</span>
+                </button>
+              </div>
+            </div>
+          ) : (
+            /* מצב עריכת משימה: הוספת תאריך, תתי-משימות ופרטים כדי להפוך לירוקה */
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">כותרת המשימה / הפרויקט *</label>
+                  <input
+                    type="text"
+                    required
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="למשל: הפקת חוברת לימוד או סגירת אולם"
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                  />
+                </div>
+
+                <div>
+                  <HebrewDatePicker
+                    allowClear
+                    clearLabel="ללא תאריך (פרויקט מתמשך)"
+                    label="תאריך ביצוע למשימה הספציפית (לוח עברי — הופך את המשימה לירוקה)"
+                    value={targetDate ? fromGregorianDate(targetDate).triplet : null}
+                    onChange={(_tr, conv) => setTargetDate(conv.gregorianIso)}
+                    onClear={() => setTargetDate('')}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">שיוך למשימת אב / פרויקט (עץ משימות)</label>
+                  <select
+                    value={parentId}
+                    onChange={(e) => setParentId(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white"
+                  >
+                    <option value="">ללא משימת אב (רמה ראשית בעץ)</option>
+                    {activeTasks
+                      .filter((p) => p.id !== editingTaskId)
+                      .map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.title}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">משך ביצוע בימים (ל-CPM) *</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="365"
+                    value={durationDays}
+                    onChange={(e) => setDurationDays(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg font-mono tabular-nums"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">אחראי ביצוע</label>
+                  <input
+                    type="text"
+                    value={assignee}
+                    onChange={(e) => setAssignee(e.target.value)}
+                    placeholder="שם השליח / המתנדב"
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                  />
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">מהות ומטרה אסטרטגית</label>
+                  <input
+                    type="text"
+                    value={strategicGoal}
+                    onChange={(e) => setStrategicGoal(e.target.value)}
+                    placeholder="למשל: חיזוק הקשר האישי עם תושבי השכונה..."
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">מבחן הצלחה כמותי/ברור</label>
+                  <input
+                    type="text"
+                    value={successCriteria}
+                    onChange={(e) => setSuccessCriteria(e.target.value)}
+                    placeholder="למשל: 150 משתתפים רשומים"
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-slate-100">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    תלויות קודמות (משימות שחייבות להסתיים לפני תחילת משימה זו):
+                  </label>
+                  <div className="max-h-28 overflow-y-auto border border-slate-200 rounded-lg p-2 space-y-1">
+                    {activeTasks
+                      .filter((t) => t.id !== editingTaskId)
+                      .map((t) => (
+                        <label key={t.id} className="flex items-center gap-2 text-xs text-slate-700">
+                          <input
+                            type="checkbox"
+                            checked={selectedDeps.includes(t.id)}
+                            onChange={() => handleToggleDependency(t.id)}
+                          />
+                          <span>{t.title} ({t.durationDays} ימים)</span>
+                        </label>
+                      ))}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="block text-xs font-semibold text-slate-700">
+                    הגדרות תזכורת בתאריך הביצוע ולפניו (במייל / שולחן העבודה / דשבורד / פלאפון)
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <select
+                      value={reminderDaysBefore}
+                      onChange={(e) => setReminderDaysBefore(Number(e.target.value))}
+                      className="px-3 py-1.5 text-xs border border-slate-300 rounded-lg bg-white"
+                    >
+                      <option value={0}>ביום הביצוע בלבד</option>
+                      <option value={1}>יום לפני + ביום הביצוע</option>
+                      <option value={2}>יומיים לפני + ביום הביצוע</option>
+                      <option value={3}>3 ימים לפני + ביום הביצוע</option>
+                      <option value={7}>שבוע לפני + ביום הביצוע</option>
+                    </select>
+                    <input
+                      type="email"
+                      value={reminderEmail}
+                      onChange={(e) => setReminderEmail(e.target.value)}
+                      placeholder="אימייל לתזכורת..."
+                      className="px-3 py-1.5 text-xs border border-slate-300 rounded-lg"
+                    />
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3 pt-1 text-xs text-slate-700">
+                    {ALL_CHANNELS.map((ch) => (
+                      <label key={ch} className="inline-flex items-center gap-1.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={selectedChannels.includes(ch)}
+                          onChange={() =>
+                            setSelectedChannels((prev) =>
+                              prev.includes(ch) ? prev.filter((x) => x !== ch) : [...prev, ch]
+                            )
+                          }
+                        />
+                        <span>{CHANNEL_META[ch].label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowForm(false);
+                    setEditingTaskId(undefined);
+                  }}
+                  className="px-4 py-2 text-xs font-medium text-slate-600"
+                >
+                  ביטול
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-emerald-700 text-white text-xs font-semibold rounded-lg hover:bg-emerald-800"
+                >
+                  שמור פרטים ותאריך (הפוך לירוק)
+                </button>
+              </div>
+            </>
+          )}
         </form>
       )}
 
@@ -1247,7 +1380,7 @@ export const TasksDagView: React.FC<TasksDagViewProps> = ({
             <div className="pt-3 border-t border-slate-200">
               <button
                 type="button"
-                onClick={() => setShowForm(true)}
+                onClick={openNewTaskForm}
                 className="w-full py-2 px-3 bg-slate-900 text-white text-xs font-semibold rounded-lg hover:bg-slate-800 flex items-center justify-center gap-1.5"
               >
                 <Plus className="w-4 h-4" />
@@ -1270,7 +1403,7 @@ export const TasksDagView: React.FC<TasksDagViewProps> = ({
               {canWrite && (
                 <button
                   type="button"
-                  onClick={() => setShowForm(true)}
+                  onClick={openNewTaskForm}
                   className="px-4 py-2 bg-slate-900 text-white text-xs font-semibold rounded-lg inline-flex items-center gap-1.5"
                 >
                   <Plus className="w-4 h-4" />
@@ -1311,6 +1444,7 @@ export const TasksDagView: React.FC<TasksDagViewProps> = ({
                     depth: number = 0
                   ): React.ReactNode => {
                     const children = activeTasks.filter((t) => t.parentId === node.id);
+                    const nodeStatus = computeTaskReadinessStatus(node, children.length);
                     const sched = cpmResult.schedules[node.id];
                     const channels = parseTaskChannels(node.reminderChannelsJson);
                     const daysBefore = node.reminderDaysBefore ?? 2;
@@ -1367,6 +1501,25 @@ export const TasksDagView: React.FC<TasksDagViewProps> = ({
                                   {node.isCompleted ? 'סמן כלא בוצע' : 'סמן משימה כבוצעה'}
                                 </span>
                               </div>
+                              {/* נקודת סטטוס (אדום = כותרת בלבד, ירוק = הוגדרו תאריך/תתי-משימות בעריכה, כחול = הושלם) */}
+                              <div className="relative group/status shrink-0 mt-1.5">
+                                <span
+                                  className={`block w-2.5 h-2.5 rounded-full ${
+                                    nodeStatus === 'blue'
+                                      ? 'bg-blue-600'
+                                      : nodeStatus === 'green'
+                                      ? 'bg-emerald-600'
+                                      : 'bg-red-600'
+                                  }`}
+                                />
+                                <span className="pointer-events-none absolute bottom-full right-0 mb-1.5 hidden group-hover/status:block whitespace-nowrap rounded bg-slate-900 px-2 py-1 text-[11px] font-medium text-white shadow-md z-30">
+                                  {nodeStatus === 'blue'
+                                    ? 'כחול: הושלם'
+                                    : nodeStatus === 'green'
+                                    ? 'ירוק: מוכן (הוגדר תאריך או תתי-משימות)'
+                                    : 'אדום: כותרת בלבד — לחץ על עריכה להוספת תאריך ותתי-משימות'}
+                                </span>
+                              </div>
                               <button
                                 type="button"
                                 onClick={(e) => {
@@ -1398,6 +1551,20 @@ export const TasksDagView: React.FC<TasksDagViewProps> = ({
                             >
                               {canWrite && (
                                 <>
+                                  <div className="relative group/btn">
+                                    <button
+                                      type="button"
+                                      onClick={() => openEditTaskForm(node)}
+                                      className="p-1.5 text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-md transition-colors flex items-center justify-center"
+                                      aria-label="עריכת משימה (הוספת תאריך, תתי-משימות ופרטים)"
+                                    >
+                                      <Edit3 className="w-3.5 h-3.5" />
+                                    </button>
+                                    <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover/btn:block whitespace-nowrap rounded bg-slate-900 px-2 py-1 text-[11px] font-medium text-white shadow-md z-30">
+                                      עריכת משימה (הוספת תאריך ופרטים לירוק)
+                                    </span>
+                                  </div>
+
                                   <div className="relative group/btn">
                                     <button
                                       type="button"

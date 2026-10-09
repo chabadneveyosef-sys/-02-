@@ -66,6 +66,22 @@ async function startServer() {
     });
   });
 
+  // API: Download signed standalone Android APK (works on devices without any browser)
+  app.get('/api/download-apk', (_req, res) => {
+    const apkPublicPath = path.join(process.cwd(), 'public', 'chabad-erp.apk');
+    const apkDistPath = path.join(process.cwd(), 'dist', 'chabad-erp.apk');
+    const targetPath = fs.existsSync(apkPublicPath) ? apkPublicPath : apkDistPath;
+
+    if (!fs.existsSync(targetPath)) {
+      res.status(404).json({ error: 'APK file not found' });
+      return;
+    }
+
+    res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+    res.setHeader('Content-Disposition', 'attachment; filename="chabad-erp-android.apk"');
+    res.sendFile(targetPath);
+  });
+
   // API: Get persistent ERP repository snapshot
   app.get('/api/repository', (_req, res) => {
     const repo = readServerRepo();

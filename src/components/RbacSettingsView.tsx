@@ -917,6 +917,14 @@ export const RbacSettingsView: React.FC<RbacSettingsViewProps> = ({
                 <Database className="w-4 h-4" />
                 הורדת גיבוי מלא מוצפן בקובץ אחד
               </button>
+              <a
+                href="/api/download-apk"
+                download="chabad-erp-android.apk"
+                className="px-4 py-2.5 bg-emerald-700 text-white text-xs font-semibold rounded-lg hover:bg-emerald-800 flex items-center gap-2"
+              >
+                <Download className="w-4 h-4" />
+                הורדת קובץ APK לאנדרואיד (ללא צורך בדפדפן)
+              </a>
             </div>
 
             <div className="pt-4 border-t border-slate-100">

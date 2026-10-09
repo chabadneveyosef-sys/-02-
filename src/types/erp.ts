@@ -172,6 +172,7 @@ export interface DonorContactRecord extends BaseEntity {
   nextActionText?: string;
   nextActionDate?: string;
   attachmentsJson?: string;      // JSON of DonorAttachmentItem[]
+  tagsJson?: string;             // JSON of string[] (למשל: ["תורמים", "תושבי השכונה", "חבדניקים"])
 }
 
 export interface VolunteerEntityRecord extends BaseEntity {

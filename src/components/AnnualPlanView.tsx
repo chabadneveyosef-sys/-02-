@@ -131,7 +131,8 @@ export const AnnualPlanView: React.FC<AnnualPlanViewProps> = ({
 
   const filteredActivities = activeActivities
     .filter((a) => {
-      if (statusFilter !== 'all' && computeAnnualActivityStatus(a) !== statusFilter) {
+      const subCount = tasks.filter((t) => !t.deletedAt && t.parentId === a.id).length;
+      if (statusFilter !== 'all' && computeAnnualActivityStatus(a, subCount) !== statusFilter) {
         return false;
       }
       if (monthFilter !== 'all' && a.hebrewMonth !== monthFilter) {
@@ -233,26 +234,21 @@ export const AnnualPlanView: React.FC<AnnualPlanViewProps> = ({
   const openNewForm = () => {
     setEditingId(undefined);
     setTitle('');
-    setCategory('התוועדות');
+    setCategory('אירוע קהילתי');
     const defaultTriplet = { day: 19, month: 9, year: 5787 };
     setTriplet(defaultTriplet);
     const defaultConv = fromHebrewTriplet(defaultTriplet, defaultLat, defaultLng);
-    setLocationName(defaultLocationName);
+    setLocationName('');
     setResponsiblePerson('');
     setBudgetIls('');
     setIsExecuted(false);
-    const defaultTplId = templates[0]?.id || '';
-    setTemplateId(defaultTplId);
+    setTemplateId('');
     setCustomValues({});
     setNotes('');
+    setFormSubtasks([]);
     setFormSubtaskDraftTitle('');
     setFormSubtaskDraftDate(defaultConv.gregorianIso);
     setFormSubtaskDraftParent(null);
-    if (defaultTplId) {
-      applyTemplateDefaultSubtasks(defaultTplId, defaultConv.gregorianIso);
-    } else {
-      setFormSubtasks([]);
-    }
     setShowForm(true);
   };
 
@@ -261,7 +257,7 @@ export const AnnualPlanView: React.FC<AnnualPlanViewProps> = ({
     setTitle(act.title);
     setCategory(act.category);
     setTriplet({ day: act.hebrewDay, month: act.hebrewMonth, year: act.hebrewYear });
-    setLocationName(act.locationName || '');
+    setLocationName(act.locationName || defaultLocationName);
     setResponsiblePerson(act.responsiblePerson || '');
     setBudgetIls(act.estimatedBudgetAgorot ? String(act.estimatedBudgetAgorot / 100) : '');
     setIsExecuted(act.isExecuted);
@@ -325,6 +321,7 @@ export const AnnualPlanView: React.FC<AnnualPlanViewProps> = ({
     if (!title.trim() || !canWrite) return;
 
     const conv = fromHebrewTriplet(triplet, defaultLat, defaultLng);
+    const isInitialTitleOnly = !editingId;
     const savedActivityId = await onSaveActivity(
       {
         title: title.trim(),
@@ -335,16 +332,19 @@ export const AnnualPlanView: React.FC<AnnualPlanViewProps> = ({
         hebrewDateDisplay: conv.hebrewDisplay,
         gregorianDate: conv.gregorianIso,
         sunsetTime: conv.sunsetTime,
-        locationName: locationName.trim(),
-        responsiblePerson: responsiblePerson.trim(),
-        estimatedBudgetAgorot: ilsToAgorot(Number(budgetIls) || 0),
-        isExecuted,
-        templateId,
-        customFieldsJson: JSON.stringify(customValues),
-        notes: notes.trim(),
+        locationName: isInitialTitleOnly ? '' : locationName.trim(),
+        responsiblePerson: isInitialTitleOnly ? '' : responsiblePerson.trim(),
+        estimatedBudgetAgorot: isInitialTitleOnly ? 0 : ilsToAgorot(Number(budgetIls) || 0),
+        isExecuted: isInitialTitleOnly ? false : isExecuted,
+        templateId: isInitialTitleOnly ? '' : templateId,
+        customFieldsJson: JSON.stringify(isInitialTitleOnly ? {} : customValues),
+        notes: isInitialTitleOnly ? '' : notes.trim(),
       },
       editingId
     );
+    if (savedActivityId) {
+      setSelectedActivityId(savedActivityId);
+    }
 
     if (formSubtasks.length > 0 && savedActivityId) {
       for (const st of formSubtasks) {
@@ -443,12 +443,21 @@ export const AnnualPlanView: React.FC<AnnualPlanViewProps> = ({
       {showForm && canWrite && (
         <form
           onSubmit={handleSubmit}
-          className="bg-white border border-slate-200 rounded-xl p-6 space-y-4"
+          className="bg-white border border-slate-200 rounded-xl p-6 space-y-4 shadow-xs"
         >
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-            <h3 className="text-base font-bold text-slate-900">
-              {editingId ? 'עריכת פעילות בתוכנית השנתית' : 'הוספת פעילות חדשה לתוכנית השנתית'}
-            </h3>
+            <div>
+              <h3 className="text-base font-bold text-slate-900">
+                {editingId
+                  ? 'שלב ב׳: עריכת פעילות / משימה — הוספת תאריך, תתי-משימות ופרטים כדי להפוך לירוקה'
+                  : 'שלב א׳: הוספת משימה או פעילות חדשה (כותרת בלבד)'}
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                {editingId
+                  ? 'השלם תאריך, תתי-משימות, אחראי, מיקום ותקציב כדי שהמשימה תהפוך מאדומה לירוקה (מוכנה לביצוע).'
+                  : 'בהוספה ראשונית מזינים רק את הכותרת (המשימה תתווסף כ"אדומה"). לאחר מכן לחץ על אייקון העריכה בכרטיס כדי להוסיף תתי-משימות, תאריך ועוד — כדי שתהפוך לירוקה.'}
+              </p>
+            </div>
             <button
               type="button"
               onClick={() => setShowForm(false)}
@@ -458,331 +467,388 @@ export const AnnualPlanView: React.FC<AnnualPlanViewProps> = ({
             </button>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="md:col-span-2">
-              <label className="block text-xs font-semibold text-slate-700 mb-1">שם הפעילות / האירוע *</label>
-              <input
-                type="text"
-                required
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="למשל: התוועדות י״ט כסלו מרכזית"
-                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">סיווג / קטגוריה</label>
-              <select
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white"
-              >
-                <option value="התוועדות">התוועדות</option>
-                <option value="חגי תשרי">חגי תשרי</option>
-                <option value="אירוע קהילתי">אירוע קהילתי</option>
-                <option value="מבצעים וחלוקה">מבצעים וחלוקה</option>
-                <option value="שיעור מיוחד">שיעור מיוחד</option>
-              </select>
-            </div>
-
-            <div className="md:col-span-2">
-              <HebrewDatePicker
-                value={triplet}
-                onChange={(newTriplet, conv) => {
-                  setTriplet(newTriplet);
-                  setFormSubtaskDraftDate(conv.gregorianIso);
-                }}
-                lat={defaultLat}
-                lng={defaultLng}
-                label="תאריך עברי (יום, חודש, שנה באותיות עבריות) *"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                תבנית דינמית (JSON Schema)
-              </label>
-              <select
-                value={templateId}
-                onChange={(e) => {
-                  const newTplId = e.target.value;
-                  setTemplateId(newTplId);
-                  if (!editingId) {
-                    const conv = fromHebrewTriplet(triplet, defaultLat, defaultLng);
-                    if (newTplId) {
-                      applyTemplateDefaultSubtasks(newTplId, conv.gregorianIso);
-                    } else {
-                      setFormSubtasks([]);
-                    }
-                  }
-                }}
-                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white"
-              >
-                <option value="">ללא תבנית מיוחדת</option>
-                {templates
-                  .filter((t) => !t.deletedAt)
-                  .map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                אחראי פעילות (חובה לסטטוס ירוק)
-              </label>
-              <input
-                type="text"
-                value={responsiblePerson}
-                onChange={(e) => setResponsiblePerson(e.target.value)}
-                placeholder="שם השליח / הרכז האחראי"
-                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                מיקום הפעילות (חובה לסטטוס ירוק)
-              </label>
-              <input
-                type="text"
-                value={locationName}
-                onChange={(e) => setLocationName(e.target.value)}
-                placeholder="אולם בית חב״ד / פארק השכונה"
-                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                תקציב משוער בש״ח (חובה לסטטוס ירוק)
-              </label>
-              <input
-                type="number"
-                min="0"
-                step="1"
-                value={budgetIls}
-                onChange={(e) => setBudgetIls(e.target.value)}
-                placeholder="למשל: 12000"
-                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg font-mono tabular-nums"
-              />
-            </div>
-          </div>
-
-          {templateFields.length > 0 && (
-            <div className="pt-3 border-t border-slate-100">
-              <div className="text-xs font-bold text-slate-800 mb-2">
-                שדות דינמיים מתוך &quot;{selectedTemplate?.name}&quot;:
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                {templateFields.map((field) => (
-                  <div key={field.key}>
-                    <label className="block text-xs text-slate-600 mb-1">{field.label}</label>
-                    {field.type === 'select' ? (
-                      <select
-                        value={String(customValues[field.key] || '')}
-                        onChange={(e) =>
-                          setCustomValues({ ...customValues, [field.key]: e.target.value })
-                        }
-                        className="w-full px-3 py-1.5 text-sm border border-slate-300 rounded-lg bg-white"
-                      >
-                        <option value="">בחר...</option>
-                        {field.options?.map((opt) => (
-                          <option key={opt} value={opt}>
-                            {opt}
-                          </option>
-                        ))}
-                      </select>
-                    ) : field.type === 'boolean' ? (
-                      <label className="flex items-center gap-2 text-sm text-slate-800 mt-1.5">
-                        <input
-                          type="checkbox"
-                          checked={Boolean(customValues[field.key])}
-                          onChange={(e) =>
-                            setCustomValues({ ...customValues, [field.key]: e.target.checked })
-                          }
-                        />
-                        <span>כן / פעיל</span>
-                      </label>
-                    ) : (
-                      <input
-                        type={field.type === 'number' ? 'number' : 'text'}
-                        value={String(customValues[field.key] ?? '')}
-                        onChange={(e) =>
-                          setCustomValues({
-                            ...customValues,
-                            [field.key]:
-                              field.type === 'number' ? Number(e.target.value) : e.target.value,
-                          })
-                        }
-                        className="w-full px-3 py-1.5 text-sm border border-slate-300 rounded-lg"
-                      />
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* הגדרת תתי-משימות בעת תכנון הפעילות (יועברו לעמוד התכנון והמשימות, ולא יוצגו בטבלת התוכנית השנתית) */}
-          <div className="pt-4 border-t border-slate-100 space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <Bell className="w-4 h-4 text-slate-800" />
-                <span className="text-xs font-bold text-slate-900">
-                  גזירת משימות ותתי-משימות עם תאריך ביצוע ספציפי ותזכורות (לחיצה על + להוספה)
-                </span>
-              </div>
-              <span className="text-[11px] text-slate-500">
-                משימות אלו יופיעו בעמוד &quot;תכנון משימות ו-DAG&quot; (אינן מופיעות בטבלת התוכנית השנתית)
-              </span>
-            </div>
-
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
-              {formSubtasks.map((st) => (
-                <div key={st.id} className="bg-white border border-slate-200 rounded-lg p-2.5 space-y-2">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-xs font-bold text-slate-900">• {st.title}</span>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <div className="flex items-center gap-1.5 text-[11px] text-slate-600">
-                        <span>תאריך ביצוע למשימה (לוח עברי):</span>
-                        <HebrewDatePicker
-                          compact
-                          value={
-                            st.targetDate
-                              ? fromGregorianDate(st.targetDate).triplet
-                              : triplet
-                          }
-                          onChange={(_tr, conv) =>
-                            updateFormSubtaskField(st.id, { targetDate: conv.gregorianIso })
-                          }
-                          lat={defaultLat}
-                          lng={defaultLng}
-                        />
-                      </div>
-                      <label className="text-[11px] text-slate-600 flex items-center gap-1">
-                        <span>תזכורת לפני:</span>
-                        <select
-                          value={st.reminderDaysBefore}
-                          onChange={(e) =>
-                            updateFormSubtaskField(st.id, {
-                              reminderDaysBefore: Number(e.target.value),
-                            })
-                          }
-                          className="px-1.5 py-0.5 text-xs border border-slate-300 rounded bg-white"
-                        >
-                          <option value={0}>ביום הביצוע</option>
-                          <option value={1}>יום לפני + ביום הביצוע</option>
-                          <option value={2}>יומיים לפני + ביום הביצוע</option>
-                          <option value={3}>3 ימים לפני + ביום הביצוע</option>
-                          <option value={7}>שבוע לפני + ביום הביצוע</option>
-                        </select>
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setFormSubtasks((prev) => prev.filter((x) => x.id !== st.id))
-                        }
-                        className="p-1 text-red-500 hover:bg-red-50 rounded"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-600">
-                    <span className="font-semibold">ערוצי תזכורת (בתאריך ולפניו):</span>
-                    {(['email', 'desktop', 'dashboard', 'mobile'] as ReminderChannel[]).map(
-                      (ch) => (
-                        <label key={ch} className="inline-flex items-center gap-1 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={st.channels.includes(ch)}
-                            onChange={() => toggleFormSubtaskChannel(st.id, ch)}
-                          />
-                          <span>{CHANNEL_LABELS[ch]}</span>
-                        </label>
-                      )
-                    )}
-                  </div>
-                </div>
-              ))}
-
-              <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-200/80">
+          {!editingId ? (
+            /* מצב הוספה מהירה: כותרת בלבד */
+            <div className="flex flex-wrap items-end gap-3 pt-1">
+              <div className="flex-1 min-w-[260px]">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  כותרת המשימה / הפעילות השנתית החדשה *
+                </label>
                 <input
                   type="text"
-                  value={formSubtaskDraftTitle}
-                  onChange={(e) => setFormSubtaskDraftTitle(e.target.value)}
-                  placeholder="שם משימה / תת-משימה חדשה..."
-                  className="flex-1 min-w-[180px] px-3 py-1.5 text-xs border border-slate-300 rounded-lg bg-white"
+                  required
+                  autoFocus
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="הקלד רק את כותרת המשימה / הפעילות..."
+                  className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-lg"
                 />
-                <div className="flex items-center gap-1.5 text-xs text-slate-700">
-                  <span>תאריך ביצוע (עברי):</span>
-                  <HebrewDatePicker
-                    compact
-                    value={
-                      formSubtaskDraftDate
-                        ? fromGregorianDate(formSubtaskDraftDate).triplet
-                        : triplet
-                    }
-                    onChange={(_tr, conv) => setFormSubtaskDraftDate(conv.gregorianIso)}
-                    lat={defaultLat}
-                    lng={defaultLng}
-                  />
-                </div>
+              </div>
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => handleAddFormSubtask(formSubtaskDraftParent)}
-                  className="px-3 py-1.5 bg-slate-900 text-white text-xs font-semibold rounded-lg hover:bg-slate-800 flex items-center gap-1"
+                  onClick={() => setShowForm(false)}
+                  className="px-4 py-2 text-xs font-medium text-slate-600 hover:text-slate-900"
                 >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>+ הוסף משימה לתכנון</span>
+                  ביטול
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-slate-900 text-white text-xs font-semibold rounded-lg hover:bg-slate-800 flex items-center gap-1.5"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>הוסף כותרת משימה (אדום — להשלמה בעריכה)</span>
                 </button>
               </div>
             </div>
-          </div>
+          ) : (
+            /* מצב עריכה מלאה: הוספת תאריך, תתי-משימות, אחראי, מיקום ותקציב כדי להפוך לירוקה */
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">שם הפעילות / המשימה *</label>
+                  <input
+                    type="text"
+                    required
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="למשל: התוועדות י״ט כסלו מרכזית"
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                  />
+                </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">הערות ודגשים</label>
-              <input
-                type="text"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="הערות לביצוע..."
-                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
-              />
-            </div>
-            <div className="flex items-end">
-              <label className="flex items-center gap-2 text-sm font-semibold text-slate-800 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={isExecuted}
-                  onChange={(e) => setIsExecuted(e.target.checked)}
-                  className="w-4 h-4"
-                />
-                <span>סמן פעילות כ&quot;בוצע&quot; (סטטוס כחול)</span>
-              </label>
-            </div>
-          </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">סיווג / קטגוריה</label>
+                  <select
+                    value={category}
+                    onChange={(e) => setCategory(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white"
+                  >
+                    <option value="התוועדות">התוועדות</option>
+                    <option value="חגי תשרי">חגי תשרי</option>
+                    <option value="אירוע קהילתי">אירוע קהילתי</option>
+                    <option value="מבצעים וחלוקה">מבצעים וחלוקה</option>
+                    <option value="שיעור מיוחד">שיעור מיוחד</option>
+                  </select>
+                </div>
 
-          <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
-            <button
-              type="button"
-              onClick={() => setShowForm(false)}
-              className="px-4 py-2 text-xs font-medium text-slate-600 hover:text-slate-900"
-            >
-              ביטול
-            </button>
-            <button
-              type="submit"
-              className="px-5 py-2 bg-slate-900 text-white text-xs font-semibold rounded-lg hover:bg-slate-800"
-            >
-              שמור פעילות בתוכנית השנתית
-            </button>
-          </div>
+                <div className="md:col-span-2">
+                  <HebrewDatePicker
+                    value={triplet}
+                    onChange={(newTriplet, conv) => {
+                      setTriplet(newTriplet);
+                      setFormSubtaskDraftDate(conv.gregorianIso);
+                    }}
+                    lat={defaultLat}
+                    lng={defaultLng}
+                    label="תאריך עברי (יום, חודש, שנה באותיות עבריות) *"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    תבנית דינמית (JSON Schema)
+                  </label>
+                  <select
+                    value={templateId}
+                    onChange={(e) => {
+                      const newTplId = e.target.value;
+                      setTemplateId(newTplId);
+                      const conv = fromHebrewTriplet(triplet, defaultLat, defaultLng);
+                      if (newTplId) {
+                        applyTemplateDefaultSubtasks(newTplId, conv.gregorianIso);
+                      }
+                    }}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white"
+                  >
+                    <option value="">ללא תבנית מיוחדת</option>
+                    {templates
+                      .filter((t) => !t.deletedAt)
+                      .map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    אחראי פעילות (חובה לסטטוס ירוק)
+                  </label>
+                  <input
+                    type="text"
+                    value={responsiblePerson}
+                    onChange={(e) => setResponsiblePerson(e.target.value)}
+                    placeholder="שם השליח / הרכז האחראי"
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    מיקום הפעילות (חובה לסטטוס ירוק)
+                  </label>
+                  <input
+                    type="text"
+                    value={locationName}
+                    onChange={(e) => setLocationName(e.target.value)}
+                    placeholder="אולם בית חב״ד / פארק השכונה"
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    תקציב משוער בש״ח (חובה לסטטוס ירוק)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={budgetIls}
+                    onChange={(e) => setBudgetIls(e.target.value)}
+                    placeholder="למשל: 12000"
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg font-mono tabular-nums"
+                  />
+                </div>
+              </div>
+
+              {templateFields.length > 0 && (
+                <div className="pt-3 border-t border-slate-100">
+                  <div className="text-xs font-bold text-slate-800 mb-2">
+                    שדות דינמיים מתוך &quot;{selectedTemplate?.name}&quot;:
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    {templateFields.map((field) => (
+                      <div key={field.key}>
+                        <label className="block text-xs text-slate-600 mb-1">{field.label}</label>
+                        {field.type === 'select' ? (
+                          <select
+                            value={String(customValues[field.key] || '')}
+                            onChange={(e) =>
+                              setCustomValues({ ...customValues, [field.key]: e.target.value })
+                            }
+                            className="w-full px-3 py-1.5 text-sm border border-slate-300 rounded-lg bg-white"
+                          >
+                            <option value="">בחר...</option>
+                            {field.options?.map((opt) => (
+                              <option key={opt} value={opt}>
+                                {opt}
+                              </option>
+                            ))}
+                          </select>
+                        ) : field.type === 'boolean' ? (
+                          <label className="flex items-center gap-2 text-sm text-slate-800 mt-1.5">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(customValues[field.key])}
+                              onChange={(e) =>
+                                setCustomValues({ ...customValues, [field.key]: e.target.checked })
+                              }
+                            />
+                            <span>כן / פעיל</span>
+                          </label>
+                        ) : (
+                          <input
+                            type={field.type === 'number' ? 'number' : 'text'}
+                            value={String(customValues[field.key] ?? '')}
+                            onChange={(e) =>
+                              setCustomValues({
+                                ...customValues,
+                                [field.key]:
+                                  field.type === 'number' ? Number(e.target.value) : e.target.value,
+                              })
+                            }
+                            className="w-full px-3 py-1.5 text-sm border border-slate-300 rounded-lg"
+                          />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* הגדרת תתי-משימות בעת עריכת הפעילות */}
+              <div className="pt-4 border-t border-slate-100 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Bell className="w-4 h-4 text-slate-800" />
+                    <span className="text-xs font-bold text-slate-900">
+                      הוספת תתי-משימות ותאריכי ביצוע ספציפיים (לחיצה על + להוספה)
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-slate-500">
+                    תתי-המשימות יתווספו לפעילות זו ולעץ התכנון
+                  </span>
+                </div>
+
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
+                  {/* תתי משימות קיימות של פעילות זו */}
+                  {tasks
+                    .filter((t) => !t.deletedAt && t.parentId === editingId)
+                    .map((existingTask) => (
+                      <div
+                        key={existingTask.id}
+                        className="bg-emerald-50/60 border border-emerald-200 rounded-lg p-2 flex items-center justify-between text-xs"
+                      >
+                        <span className="font-bold text-slate-900">
+                          ✓ תת-משימה קיימת: {existingTask.title} ({existingTask.hebrewDateStr || existingTask.targetDate || ''})
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => onSoftDeleteTask(existingTask.id)}
+                          className="p-1 text-red-600 hover:bg-red-50 rounded"
+                          title="מחק תת-משימה"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+
+                  {formSubtasks.map((st) => (
+                    <div key={st.id} className="bg-white border border-slate-200 rounded-lg p-2.5 space-y-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-xs font-bold text-slate-900">• {st.title}</span>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="flex items-center gap-1.5 text-[11px] text-slate-600">
+                            <span>תאריך ביצוע למשימה (לוח עברי):</span>
+                            <HebrewDatePicker
+                              compact
+                              value={
+                                st.targetDate
+                                  ? fromGregorianDate(st.targetDate).triplet
+                                  : triplet
+                              }
+                              onChange={(_tr, conv) =>
+                                updateFormSubtaskField(st.id, { targetDate: conv.gregorianIso })
+                              }
+                              lat={defaultLat}
+                              lng={defaultLng}
+                            />
+                          </div>
+                          <label className="text-[11px] text-slate-600 flex items-center gap-1">
+                            <span>תזכורת לפני:</span>
+                            <select
+                              value={st.reminderDaysBefore}
+                              onChange={(e) =>
+                                updateFormSubtaskField(st.id, {
+                                  reminderDaysBefore: Number(e.target.value),
+                                })
+                              }
+                              className="px-1.5 py-0.5 text-xs border border-slate-300 rounded bg-white"
+                            >
+                              <option value={0}>ביום הביצוע</option>
+                              <option value={1}>יום לפני + ביום הביצוע</option>
+                              <option value={2}>יומיים לפני + ביום הביצוע</option>
+                              <option value={3}>3 ימים לפני + ביום הביצוע</option>
+                              <option value={7}>שבוע לפני + ביום הביצוע</option>
+                            </select>
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setFormSubtasks((prev) => prev.filter((x) => x.id !== st.id))
+                            }
+                            className="p-1 text-red-500 hover:bg-red-50 rounded"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-600">
+                        <span className="font-semibold">ערוצי תזכורת (בתאריך ולפניו):</span>
+                        {(['email', 'desktop', 'dashboard', 'mobile'] as ReminderChannel[]).map(
+                          (ch) => (
+                            <label key={ch} className="inline-flex items-center gap-1 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={st.channels.includes(ch)}
+                                onChange={() => toggleFormSubtaskChannel(st.id, ch)}
+                              />
+                              <span>{CHANNEL_LABELS[ch]}</span>
+                            </label>
+                          )
+                        )}
+                      </div>
+                    </div>
+                  ))}
+
+                  <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-200/80">
+                    <input
+                      type="text"
+                      value={formSubtaskDraftTitle}
+                      onChange={(e) => setFormSubtaskDraftTitle(e.target.value)}
+                      placeholder="שם תת-משימה חדשה..."
+                      className="flex-1 min-w-[180px] px-3 py-1.5 text-xs border border-slate-300 rounded-lg bg-white"
+                    />
+                    <div className="flex items-center gap-1.5 text-xs text-slate-700">
+                      <span>תאריך ביצוע (עברי):</span>
+                      <HebrewDatePicker
+                        compact
+                        value={
+                          formSubtaskDraftDate
+                            ? fromGregorianDate(formSubtaskDraftDate).triplet
+                            : triplet
+                        }
+                        onChange={(_tr, conv) => setFormSubtaskDraftDate(conv.gregorianIso)}
+                        lat={defaultLat}
+                        lng={defaultLng}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleAddFormSubtask(formSubtaskDraftParent)}
+                      className="px-3 py-1.5 bg-slate-900 text-white text-xs font-semibold rounded-lg hover:bg-slate-800 flex items-center gap-1"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>+ הוסף תת-משימה</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">הערות ודגשים</label>
+                  <input
+                    type="text"
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    placeholder="הערות לביצוע..."
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                  />
+                </div>
+                <div className="flex items-end">
+                  <label className="flex items-center gap-2 text-sm font-semibold text-slate-800 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={isExecuted}
+                      onChange={(e) => setIsExecuted(e.target.checked)}
+                      className="w-4 h-4"
+                    />
+                    <span>סמן פעילות כ&quot;בוצע&quot; (סטטוס כחול)</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowForm(false)}
+                  className="px-4 py-2 text-xs font-medium text-slate-600 hover:text-slate-900"
+                >
+                  ביטול
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-emerald-700 text-white text-xs font-semibold rounded-lg hover:bg-emerald-800"
+                >
+                  שמור פרטים ותתי-משימות (הפוך לירוק)
+                </button>
+              </div>
+            </>
+          )}
         </form>
       )}
 
@@ -855,10 +921,10 @@ export const AnnualPlanView: React.FC<AnnualPlanViewProps> = ({
           {/* פירוט הפעילות/המשימה שנבחרה בסרגל הצד */}
           {selectedActivity ? (
             (() => {
-              const selStatus = computeAnnualActivityStatus(selectedActivity);
               const linkedTasks = tasks.filter(
                 (t) => !t.deletedAt && t.parentId === selectedActivity.id
               );
+              const selStatus = computeAnnualActivityStatus(selectedActivity, linkedTasks.length);
               const tpl = templates.find((t) => t.id === selectedActivity.templateId);
               let parsedCustom: Record<string, unknown> = {};
               try {
@@ -1115,13 +1181,13 @@ export const AnnualPlanView: React.FC<AnnualPlanViewProps> = ({
           ) : (
             <div className="grid grid-cols-2 gap-3 items-start">
               {filteredActivities.map((act) => {
-                const status = computeAnnualActivityStatus(act);
-                const isSelected = selectedActivity?.id === act.id;
-                const isExpanded = expandedActivityIds.includes(act.id);
-                const isInlineEditing = inlineEditingId === act.id;
                 const linkedTasks = tasks.filter(
                   (t) => !t.deletedAt && t.parentId === act.id
                 );
+                const status = computeAnnualActivityStatus(act, linkedTasks.length);
+                const isSelected = selectedActivity?.id === act.id;
+                const isExpanded = expandedActivityIds.includes(act.id);
+                const isInlineEditing = inlineEditingId === act.id;
 
                 return (
                   <div
