@@ -7,6 +7,15 @@ import {
   Trash2,
   Edit3,
   Bell,
+  ChevronDown,
+  ChevronUp,
+  Calendar,
+  MapPin,
+  User,
+  Wallet,
+  FileText,
+  CheckSquare,
+  Square,
 } from 'lucide-react';
 import {
   AnnualActivityRecord,
@@ -23,6 +32,7 @@ import {
   formatAgorotToIls,
   ilsToAgorot,
   HebrewDateTriplet,
+  getHebrewMonthName,
 } from '../lib/erp-core';
 import { HebrewDatePicker } from './HebrewDatePicker';
 
@@ -68,6 +78,7 @@ const CHANNEL_LABELS: Record<ReminderChannel, string> = {
 export const AnnualPlanView: React.FC<AnnualPlanViewProps> = ({
   activities,
   templates,
+  tasks,
   canWrite,
   defaultLocationName,
   defaultLat,
@@ -76,12 +87,17 @@ export const AnnualPlanView: React.FC<AnnualPlanViewProps> = ({
   onSoftDeleteActivity,
   onToggleExecuted,
   onSaveTask,
+  onToggleTaskCompleted,
+  onSoftDeleteTask,
 }) => {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | undefined>(undefined);
   const [statusFilter, setStatusFilter] = useState<'all' | 'red' | 'green' | 'blue'>('all');
+  const [monthFilter, setMonthFilter] = useState<number | 'all'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<'hebrew_date' | 'budget_desc' | 'title'>('hebrew_date');
+  const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
+  const [expandedActivityIds, setExpandedActivityIds] = useState<string[]>([]);
   const [inlineEditingId, setInlineEditingId] = useState<string | null>(null);
   const [inlineNotesDraft, setInlineNotesDraft] = useState('');
   const [inlineResponsibleDraft, setInlineResponsibleDraft] = useState('');
@@ -118,6 +134,9 @@ export const AnnualPlanView: React.FC<AnnualPlanViewProps> = ({
       if (statusFilter !== 'all' && computeAnnualActivityStatus(a) !== statusFilter) {
         return false;
       }
+      if (monthFilter !== 'all' && a.hebrewMonth !== monthFilter) {
+        return false;
+      }
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         return (
@@ -143,6 +162,17 @@ export const AnnualPlanView: React.FC<AnnualPlanViewProps> = ({
         { day: b.hebrewDay, month: b.hebrewMonth, year: b.hebrewYear }
       );
     });
+
+  const selectedActivity =
+    activeActivities.find((a) => a.id === selectedActivityId) ||
+    filteredActivities[0] ||
+    null;
+
+  const toggleExpandedActivity = (id: string) => {
+    setExpandedActivityIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
 
   const handleSaveInlineQuickEdit = async (act: AnnualActivityRecord) => {
     if (!canWrite) return;
@@ -353,7 +383,7 @@ export const AnnualPlanView: React.FC<AnnualPlanViewProps> = ({
         <div>
           <h2 className="text-2xl font-bold text-slate-900">תוכנית שנתית ולוח שנה עברי</h2>
           <p className="text-sm text-slate-600">
-            טבלת התוכנית השנתית מציגה את האירועים והפעילויות השנתיות לפי סדר החודשים העבריים (מתשרי ועד אלול). עץ המשימות ותתי-המשימות מנוהל בנפרד בעמוד התכנון והמשימות.
+            התוכנית השנתית מוצגת כתקציר בשני טורים (כותרת וכפתורי עריכה בלבד), ולצידה סרגל צד קבוע להצגת הפירוט המלא של המשימה או הפעילות שנבחרה.
           </p>
         </div>
 
@@ -756,7 +786,7 @@ export const AnnualPlanView: React.FC<AnnualPlanViewProps> = ({
         </form>
       )}
 
-      {/* סרגל חיפוש ומיון מהיר בדומה לתוכנות ארגוניות מקובלות */}
+      {/* סרגל חיפוש ומיון מהיר */}
       <div className="bg-white border border-slate-300/80 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
         <div className="flex-1 min-w-[240px]">
           <input
@@ -769,7 +799,7 @@ export const AnnualPlanView: React.FC<AnnualPlanViewProps> = ({
         </div>
         <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
           <label className="flex items-center gap-1.5">
-            <span className="font-semibold text-slate-700">מיון טבלה:</span>
+            <span className="font-semibold text-slate-700">מיון התוכנית:</span>
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value as 'hebrew_date' | 'budget_desc' | 'title')}
@@ -781,201 +811,557 @@ export const AnnualPlanView: React.FC<AnnualPlanViewProps> = ({
             </select>
           </label>
           <span className="text-slate-500 hidden sm:inline">
-            טיפ: לחיצה כפולה על תא טקסט מאפשרת עריכה מהירה במקום
+            התוכנית מוצגת כתקציר בשני טורים · לחץ על פעילות להצגת פירוט מלא בסרגל שבצד או לפתיחתה
           </span>
         </div>
       </div>
 
-      {/* טבלת התוכנית השנתית — תאים מרובי-טקסט מקבלים רוחב נדיב באופן קבוע */}
-      <div className="bg-white border border-slate-300/90 rounded-xl overflow-hidden shadow-xs">
-        <div className="overflow-x-auto max-h-[680px]">
-          <table className="erp-table text-right">
-            <thead>
-              <tr className="text-xs font-semibold text-slate-700">
-                <th className="py-3.5 px-4 col-compact">סטטוס אוטומטי</th>
-                <th className="py-3.5 px-4 col-compact">תאריך עברי ולועזי</th>
-                <th className="py-3.5 px-5 col-text-wide">שם הפעילות, קטגוריה, הערות ודגשים מפורטים</th>
-                <th className="py-3.5 px-5 col-text-medium">אחראי פעילות ומיקום מדויק</th>
-                <th className="py-3.5 px-4 col-compact">תקציב משוער</th>
-                <th className="py-3.5 px-4 text-left col-compact">פעולות</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200/80 text-sm">
-              {filteredActivities.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="py-8 text-center text-slate-500">
-                    לא נמצאו פעילויות בתוכנית השנתית התואמות לסינון הנוכחי.
-                  </td>
-                </tr>
-              ) : (
-                filteredActivities.map((act) => {
-                  const status = computeAnnualActivityStatus(act);
-                  const isInlineEditing = inlineEditingId === act.id;
-                  return (
-                    <tr
-                      key={act.id}
-                      onDoubleClick={() => {
-                        if (!canWrite) return;
-                        setInlineEditingId(act.id);
-                        setInlineNotesDraft(act.notes || '');
-                        setInlineResponsibleDraft(act.responsiblePerson || '');
-                        setInlineLocationDraft(act.locationName || '');
-                      }}
-                      className="transition-colors"
-                    >
-                      <td className="py-3.5 px-4 whitespace-nowrap align-top">
-                        {status === 'blue' && (
-                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-800">
-                            <CheckCircle2 className="w-4 h-4 shrink-0" />
-                            <span>כחול · בוצע</span>
-                          </span>
-                        )}
-                        {status === 'green' && (
-                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-800">
-                            <Clock className="w-4 h-4 shrink-0" />
-                            <span>ירוק · תקין ומלא</span>
-                          </span>
-                        )}
-                        {status === 'red' && (
-                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-red-700">
-                            <AlertTriangle className="w-4 h-4 shrink-0" />
-                            <span>אדום · חסרים שדות חובה</span>
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-3.5 px-4 whitespace-nowrap align-top">
-                        <div className="font-bold text-slate-900">{act.hebrewDateDisplay}</div>
-                        <div className="text-xs text-slate-600 font-mono tabular-nums mt-0.5">
-                          {act.gregorianDate} · שקיעה {act.sunsetTime || '17:30'}
+      {/* פריסת התוכנית השנתית: סרגל בצד (פירוט + ניווט) + תצוגת תקציר בשני טורים */}
+      <div className="grid grid-cols-1 sm:grid-cols-12 gap-5 items-start">
+        {/* סרגל צד: ניווט ופירוט מלא של הפעילות/משימה שנבחרה (4 עמודות) */}
+        <aside className="sm:col-span-4 bg-white border border-slate-300/90 rounded-xl p-4 space-y-4 sm:sticky sm:top-20 shadow-xs">
+          {/* כותרת סרגל צד וסינון חודשים */}
+          <div className="border-b border-slate-200 pb-3 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-blue-800" />
+                <span>סרגל תוכנית שנתית ופירוט משימה</span>
+              </h3>
+              <span className="text-[11px] font-mono text-slate-500">
+                {filteredActivities.length} פעילויות
+              </span>
+            </div>
+
+            {/* סינון מהיר לפי חודש עברי */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-slate-600 shrink-0">חודש עברי:</span>
+              <select
+                value={monthFilter}
+                onChange={(e) =>
+                  setMonthFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))
+                }
+                className="flex-1 px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg bg-slate-50 font-medium text-slate-800"
+              >
+                <option value="all">כל חודשי השנה (תשרי – אלול)</option>
+                {[7, 8, 9, 10, 11, 12, 13, 1, 2, 3, 4, 5, 6].map((m) => (
+                  <option key={m} value={m}>
+                    {getHebrewMonthName(m, true)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* פירוט הפעילות/המשימה שנבחרה בסרגל הצד */}
+          {selectedActivity ? (
+            (() => {
+              const selStatus = computeAnnualActivityStatus(selectedActivity);
+              const linkedTasks = tasks.filter(
+                (t) => !t.deletedAt && t.parentId === selectedActivity.id
+              );
+              const tpl = templates.find((t) => t.id === selectedActivity.templateId);
+              let parsedCustom: Record<string, unknown> = {};
+              try {
+                parsedCustom = selectedActivity.customFieldsJson
+                  ? JSON.parse(selectedActivity.customFieldsJson)
+                  : {};
+              } catch {
+                parsedCustom = {};
+              }
+
+              return (
+                <div className="space-y-4">
+                  <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/90 space-y-2.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <span className="text-[11px] font-bold text-blue-800">
+                          פירוט משימה / פעילות נבחרת:
+                        </span>
+                        <h4 className="text-base font-bold text-slate-900 leading-snug mt-0.5">
+                          {selectedActivity.title}
+                        </h4>
+                      </div>
+                      {canWrite && (
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => openEditForm(selectedActivity)}
+                            className="p-1.5 text-slate-700 hover:text-slate-900 bg-white border border-slate-200 rounded-lg hover:bg-slate-100"
+                            title="עריכה מלאה"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onSoftDeleteActivity(selectedActivity.id)}
+                            className="p-1.5 text-red-700 hover:text-red-900 bg-white border border-slate-200 rounded-lg hover:bg-red-50"
+                            title="מחיקה"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </div>
-                      </td>
-                      <td className="py-3.5 px-5 col-text-wide align-top">
-                        <div className="font-bold text-slate-900 text-base leading-snug">
-                          {act.title}
+                      )}
+                    </div>
+
+                    {/* שורת סטטוס וקטגוריה */}
+                    <div className="flex flex-wrap items-center gap-2 text-xs pt-1">
+                      {selStatus === 'blue' && (
+                        <span className="inline-flex items-center gap-1 font-bold text-blue-800">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span>כחול · בוצע</span>
+                        </span>
+                      )}
+                      {selStatus === 'green' && (
+                        <span className="inline-flex items-center gap-1 font-bold text-emerald-800">
+                          <Clock className="w-3.5 h-3.5" />
+                          <span>ירוק · מוכן ומלא</span>
+                        </span>
+                      )}
+                      {selStatus === 'red' && (
+                        <span className="inline-flex items-center gap-1 font-bold text-red-700">
+                          <AlertTriangle className="w-3.5 h-3.5" />
+                          <span>אדום · חסרים פרטי חובה</span>
+                        </span>
+                      )}
+                      <span className="text-slate-400">·</span>
+                      <span className="font-semibold text-slate-700">
+                        קטגוריה: {selectedActivity.category}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* מפרט מלא של הפעילות הנבחרת */}
+                  <div className="space-y-2.5 text-xs">
+                    <div className="flex items-start gap-2.5 p-2.5 rounded-lg border border-slate-200/80">
+                      <Calendar className="w-4 h-4 text-slate-600 shrink-0 mt-0.5" />
+                      <div>
+                        <div className="font-bold text-slate-900">
+                          {selectedActivity.hebrewDateDisplay}
                         </div>
-                        <div className="text-xs text-slate-700 mt-1 leading-relaxed">
-                          <span className="font-semibold text-slate-800">{act.category}</span>
-                          {act.notes ? ` · ${act.notes}` : ' · (ללא הערות נוספות — לחץ פעמיים לעריכה מהירה)'}
+                        <div className="text-slate-600 font-mono tabular-nums mt-0.5">
+                          תאריך לועזי: {selectedActivity.gregorianDate} · שקיעה:{' '}
+                          {selectedActivity.sunsetTime || '17:30'}
                         </div>
-                        {isInlineEditing && (
-                          <div className="mt-2 pt-2 border-t border-slate-300/70 space-y-2">
-                            <input
-                              type="text"
-                              value={inlineNotesDraft}
-                              onChange={(e) => setInlineNotesDraft(e.target.value)}
-                              placeholder="עריכת הערות ודגשים לפעילות..."
-                              className="w-full px-2.5 py-1.5 text-xs border border-slate-400 rounded-md"
-                            />
-                            <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() => handleSaveInlineQuickEdit(act)}
-                                className="px-2.5 py-1 bg-slate-900 text-white text-xs font-semibold rounded"
-                              >
-                                שמור שינויים מהירים
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setInlineEditingId(null)}
-                                className="px-2 py-1 text-xs text-slate-600 hover:text-slate-900"
-                              >
-                                ביטול
-                              </button>
-                            </div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="p-2.5 rounded-lg border border-slate-200/80">
+                        <div className="text-slate-500 flex items-center gap-1 mb-0.5">
+                          <User className="w-3.5 h-3.5" />
+                          <span>אחראי פעילות:</span>
+                        </div>
+                        <div className="font-bold text-slate-900">
+                          {selectedActivity.responsiblePerson || (
+                            <span className="text-red-600">טרם הוגדר אחראי</span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="p-2.5 rounded-lg border border-slate-200/80">
+                        <div className="text-slate-500 flex items-center gap-1 mb-0.5">
+                          <Wallet className="w-3.5 h-3.5" />
+                          <span>תקציב משוער:</span>
+                        </div>
+                        <div className="font-bold text-slate-900 font-mono tabular-nums">
+                          {selectedActivity.estimatedBudgetAgorot &&
+                          selectedActivity.estimatedBudgetAgorot > 0 ? (
+                            formatAgorotToIls(selectedActivity.estimatedBudgetAgorot)
+                          ) : (
+                            <span className="text-red-600 font-sans">טרם הוגדר תקציב</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="p-2.5 rounded-lg border border-slate-200/80">
+                      <div className="text-slate-500 flex items-center gap-1 mb-0.5">
+                        <MapPin className="w-3.5 h-3.5" />
+                        <span>מיקום מדויק:</span>
+                      </div>
+                      <div className="font-bold text-slate-900">
+                        {selectedActivity.locationName || (
+                          <span className="text-red-600">טרם הוגדר מיקום</span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="p-2.5 rounded-lg border border-slate-200/80">
+                      <div className="text-slate-500 flex items-center gap-1 mb-0.5">
+                        <FileText className="w-3.5 h-3.5" />
+                        <span>הערות ודגשים לביצוע:</span>
+                      </div>
+                      <div className="text-slate-800 leading-relaxed">
+                        {selectedActivity.notes || 'ללא הערות מיוחדות.'}
+                      </div>
+                    </div>
+
+                    {tpl && Object.keys(parsedCustom).length > 0 && (
+                      <div className="p-2.5 rounded-lg border border-slate-200/80 bg-slate-50/60 space-y-1">
+                        <div className="font-bold text-slate-800">
+                          שדות תבנית ({tpl.name}):
+                        </div>
+                        {Object.entries(parsedCustom).map(([k, v]) => (
+                          <div key={k} className="flex items-center justify-between text-slate-700">
+                            <span>{k}:</span>
+                            <strong className="font-mono">{String(v)}</strong>
                           </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* משימות נגזרות של הפעילות הנבחרת */}
+                  <div className="pt-2 border-t border-slate-200 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-slate-900">
+                        משימות ביצוע משויכות ({linkedTasks.length}):
+                      </span>
+                    </div>
+                    {linkedTasks.length === 0 ? (
+                      <p className="text-xs text-slate-500">
+                        אין תתי-משימות משויכות לפעילות זו. ניתן להוסיף דרך כפתור העריכה.
+                      </p>
+                    ) : (
+                      <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                        {linkedTasks.map((t) => (
+                          <div
+                            key={t.id}
+                            className="p-2 rounded-lg border border-slate-200 bg-slate-50 flex items-center justify-between gap-2 text-xs"
+                          >
+                            <button
+                              type="button"
+                              disabled={!canWrite}
+                              onClick={() => onToggleTaskCompleted(t)}
+                              className="flex items-center gap-2 text-right flex-1"
+                            >
+                              {t.isCompleted ? (
+                                <CheckSquare className="w-4 h-4 text-emerald-700 shrink-0" />
+                              ) : (
+                                <Square className="w-4 h-4 text-slate-400 shrink-0" />
+                              )}
+                              <span
+                                className={`font-medium ${
+                                  t.isCompleted ? 'line-through text-slate-400' : 'text-slate-900'
+                                }`}
+                              >
+                                {t.title}
+                              </span>
+                            </button>
+                            {canWrite && (
+                              <button
+                                type="button"
+                                onClick={() => onSoftDeleteTask(t.id)}
+                                className="p-1 text-red-600 hover:bg-red-50 rounded"
+                                title="מחק משימה"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* כפתורי פעולה מהירים בסרגל הצד */}
+                  {canWrite && (
+                    <div className="pt-2 border-t border-slate-200 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onToggleExecuted(selectedActivity)}
+                        className="flex-1 py-2 px-3 text-xs font-bold border border-slate-300 rounded-lg hover:bg-slate-100 text-slate-900"
+                      >
+                        {selectedActivity.isExecuted ? 'בטל סימון ביצוע' : 'סמן פעילות כבוצעה'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openEditForm(selectedActivity)}
+                        className="flex-1 py-2 px-3 text-xs font-bold bg-slate-900 text-white rounded-lg hover:bg-slate-800"
+                      >
+                        עריכת פעילות
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })()
+          ) : (
+            <div className="py-8 text-center text-xs text-slate-500">
+              בחר פעילות או משימה מהרשימה כדי לצפות בפירוט המלא שלה כאן בסרגל הצד.
+            </div>
+          )}
+
+          {/* סיכום תקציבי בתחתית הסרגל */}
+          <div className="pt-3 border-t border-slate-200 flex items-center justify-between text-xs font-bold text-slate-800">
+            <span>סה״כ תקציב משוער בתצוגה:</span>
+            <span className="font-mono tabular-nums text-sm text-slate-900">
+              {formatAgorotToIls(
+                filteredActivities.reduce(
+                  (acc, item) => acc + (item.estimatedBudgetAgorot || 0),
+                  0
+                )
+              )}
+            </span>
+          </div>
+        </aside>
+
+        {/* אזור מרכזי (8 עמודות): הצגת התוכנית השנתית בשני טורים כתקציר (רק הכותרת וכפתורי עריכה) */}
+        <div className="sm:col-span-8">
+          {filteredActivities.length === 0 ? (
+            <div className="bg-white border border-slate-300/90 rounded-xl p-10 text-center text-slate-500 text-sm">
+              לא נמצאו פעילויות בתוכנית השנתית התואמות לסינון הנוכחי.
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-3 items-start">
+              {filteredActivities.map((act) => {
+                const status = computeAnnualActivityStatus(act);
+                const isSelected = selectedActivity?.id === act.id;
+                const isExpanded = expandedActivityIds.includes(act.id);
+                const isInlineEditing = inlineEditingId === act.id;
+                const linkedTasks = tasks.filter(
+                  (t) => !t.deletedAt && t.parentId === act.id
+                );
+
+                return (
+                  <div
+                    key={act.id}
+                    onClick={() => setSelectedActivityId(act.id)}
+                    className={`bg-white rounded-xl border transition-all cursor-pointer ${
+                      isSelected
+                        ? 'border-slate-900 ring-2 ring-slate-900/10 shadow-sm'
+                        : 'border-slate-300/90 hover:border-slate-400'
+                    }`}
+                  >
+                    {/* שורת תקציר בלבד: נקודת סטטוס + מלוא הכותרת + כפתורי אייקון עם הסבר צף במעבר עכבר */}
+                    <div className="p-3 flex items-start justify-between gap-2">
+                      <div className="flex items-start gap-2 min-w-0 flex-1">
+                        <div className="relative group/status shrink-0 mt-1.5">
+                          <span
+                            className={`block w-2.5 h-2.5 rounded-full ${
+                              status === 'blue'
+                                ? 'bg-blue-600'
+                                : status === 'green'
+                                ? 'bg-emerald-600'
+                                : 'bg-red-600'
+                            }`}
+                          />
+                          <span className="pointer-events-none absolute bottom-full right-0 mb-1.5 hidden group-hover/status:block whitespace-nowrap rounded bg-slate-900 px-2 py-1 text-[11px] font-medium text-white shadow-md z-30">
+                            {status === 'blue'
+                              ? 'כחול: בוצע'
+                              : status === 'green'
+                              ? 'ירוק: תקין ומלא'
+                              : 'אדום: חסרים שדות חובה'}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedActivityId(act.id);
+                          }}
+                          className="text-right font-bold text-slate-900 text-sm leading-snug break-words hover:text-blue-900 flex-1"
+                          title="לחץ להצגת הפירוט בסרגל הצד"
+                        >
+                          {act.title}
+                        </button>
+                      </div>
+
+                      {/* כפתורי אייקון בלבד עם הסבר צף במעבר עכבר */}
+                      <div
+                        className="flex items-center gap-1 shrink-0"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {canWrite && (
+                          <>
+                            <div className="relative group/btn">
+                              <button
+                                type="button"
+                                onClick={() => openEditForm(act)}
+                                className="p-1.5 text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-md transition-colors flex items-center justify-center"
+                                aria-label="עריכת פעילות"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+                              <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover/btn:block whitespace-nowrap rounded bg-slate-900 px-2 py-1 text-[11px] font-medium text-white shadow-md z-30">
+                                עריכת פעילות
+                              </span>
+                            </div>
+
+                            <div className="relative group/btn">
+                              <button
+                                type="button"
+                                onClick={() => onSoftDeleteActivity(act.id)}
+                                className="p-1.5 text-red-600 hover:text-red-800 bg-white border border-slate-200 rounded-md hover:bg-red-50 transition-colors flex items-center justify-center"
+                                aria-label="מחיקת פעילות"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                              <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover/btn:block whitespace-nowrap rounded bg-slate-900 px-2 py-1 text-[11px] font-medium text-white shadow-md z-30">
+                                מחיקת פעילות
+                              </span>
+                            </div>
+                          </>
                         )}
-                      </td>
-                      <td className="py-3.5 px-5 col-text-medium align-top text-xs">
+                        <div className="relative group/btn">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedActivityId(act.id);
+                              toggleExpandedActivity(act.id);
+                            }}
+                            className="p-1.5 text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-md transition-colors flex items-center justify-center"
+                            aria-label={isExpanded ? 'סגור פירוט' : 'פתח פירוט'}
+                          >
+                            {isExpanded ? (
+                              <ChevronUp className="w-3.5 h-3.5" />
+                            ) : (
+                              <ChevronDown className="w-3.5 h-3.5" />
+                            )}
+                          </button>
+                          <span className="pointer-events-none absolute bottom-full left-0 mb-1.5 hidden group-hover/btn:block whitespace-nowrap rounded bg-slate-900 px-2 py-1 text-[11px] font-medium text-white shadow-md z-30">
+                            {isExpanded ? 'סגור פירוט' : 'פתח פירוט פעילות'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* פירוט הפעילות/המשימה בעת פתיחת הכרטיס */}
+                    {isExpanded && (
+                      <div
+                        className="px-3.5 pb-3.5 pt-2.5 border-t border-slate-200/80 bg-slate-50/70 space-y-2.5 text-xs"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <span className="text-slate-500 block">תאריך עברי ולועזי:</span>
+                            <strong className="text-slate-900">{act.hebrewDateDisplay}</strong>
+                            <span className="block font-mono text-[11px] text-slate-600">
+                              {act.gregorianDate} · שקיעה {act.sunsetTime || '17:30'}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-slate-500 block">קטגוריה ותקציב:</span>
+                            <strong className="text-slate-900">{act.category}</strong>
+                            <span className="block font-mono text-[11px] text-slate-800 font-semibold">
+                              {act.estimatedBudgetAgorot && act.estimatedBudgetAgorot > 0
+                                ? formatAgorotToIls(act.estimatedBudgetAgorot)
+                                : 'חסר תקציב'}
+                            </span>
+                          </div>
+                        </div>
+
                         {isInlineEditing ? (
-                          <div className="space-y-1.5">
+                          <div className="space-y-2 pt-1">
                             <input
                               type="text"
                               value={inlineResponsibleDraft}
                               onChange={(e) => setInlineResponsibleDraft(e.target.value)}
                               placeholder="אחראי פעילות..."
-                              className="w-full px-2 py-1 text-xs border border-slate-400 rounded"
+                              className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-md bg-white"
                             />
                             <input
                               type="text"
                               value={inlineLocationDraft}
                               onChange={(e) => setInlineLocationDraft(e.target.value)}
-                              placeholder="מיקום מדויק..."
-                              className="w-full px-2 py-1 text-xs border border-slate-400 rounded"
+                              placeholder="מיקום הפעילות..."
+                              className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-md bg-white"
                             />
+                            <input
+                              type="text"
+                              value={inlineNotesDraft}
+                              onChange={(e) => setInlineNotesDraft(e.target.value)}
+                              placeholder="הערות ודגשים..."
+                              className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-md bg-white"
+                            />
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleSaveInlineQuickEdit(act)}
+                                className="px-3 py-1 bg-slate-900 text-white text-xs font-semibold rounded-md"
+                              >
+                                שמור
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setInlineEditingId(null)}
+                                className="px-2 py-1 text-xs text-slate-600"
+                              >
+                                ביטול
+                              </button>
+                            </div>
                           </div>
                         ) : (
                           <>
-                            <div className="text-slate-900 font-semibold text-sm">
-                              {act.responsiblePerson || (
-                                <span className="text-red-700">חסר אחראי</span>
-                              )}
+                            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                              <div>
+                                <span className="text-slate-500">אחראי: </span>
+                                <strong className="text-slate-900">
+                                  {act.responsiblePerson || 'חסר אחראי'}
+                                </strong>
+                              </div>
+                              <div>
+                                <span className="text-slate-500">מיקום: </span>
+                                <strong className="text-slate-900">
+                                  {act.locationName || 'חסר מיקום'}
+                                </strong>
+                              </div>
                             </div>
-                            <div className="text-slate-600 mt-0.5 leading-relaxed">
-                              {act.locationName || <span className="text-red-700">חסר מיקום</span>}
+                            <div className="text-slate-700 leading-relaxed">
+                              <span className="text-slate-500">הערות: </span>
+                              {act.notes || 'ללא הערות נוספות.'}
                             </div>
+                            {linkedTasks.length > 0 && (
+                              <div className="pt-1.5 border-t border-slate-200/80 space-y-1">
+                                <span className="font-bold text-slate-800 block">
+                                  תתי-משימות ({linkedTasks.length}):
+                                </span>
+                                {linkedTasks.map((t) => (
+                                  <div
+                                    key={t.id}
+                                    className="flex items-center justify-between text-[11px] bg-white px-2 py-1 rounded border border-slate-200"
+                                  >
+                                    <span
+                                      className={
+                                        t.isCompleted
+                                          ? 'line-through text-slate-400'
+                                          : 'text-slate-800 font-medium'
+                                      }
+                                    >
+                                      • {t.title}
+                                    </span>
+                                    <span className="font-mono text-slate-500">
+                                      {t.hebrewDateStr || t.targetDate || ''}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            {canWrite && (
+                              <div className="pt-1 flex justify-end">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setInlineEditingId(act.id);
+                                    setInlineResponsibleDraft(act.responsiblePerson || '');
+                                    setInlineLocationDraft(act.locationName || '');
+                                    setInlineNotesDraft(act.notes || '');
+                                  }}
+                                  className="text-[11px] font-semibold text-blue-800 hover:underline"
+                                >
+                                  עריכה מהירה במקום
+                                </button>
+                              </div>
+                            )}
                           </>
                         )}
-                      </td>
-                      <td className="py-3.5 px-4 font-mono tabular-nums text-sm whitespace-nowrap align-top font-semibold">
-                        {act.estimatedBudgetAgorot && act.estimatedBudgetAgorot > 0 ? (
-                          formatAgorotToIls(act.estimatedBudgetAgorot)
-                        ) : (
-                          <span className="text-xs text-red-700 font-sans">חסר תקציב</span>
-                        )}
-                      </td>
-                      <td className="py-3.5 px-4 text-left whitespace-nowrap align-top">
-                        {canWrite && (
-                          <div className="inline-flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => onToggleExecuted(act)}
-                              className="px-2.5 py-1 text-xs font-medium border border-slate-300 rounded hover:bg-slate-200/70 text-slate-800"
-                            >
-                              {act.isExecuted ? 'בטל ביצוע' : 'סמן בוצע'}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => openEditForm(act)}
-                              className="p-1.5 text-slate-700 hover:text-slate-900 rounded hover:bg-slate-200/70"
-                              title="ערוך"
-                            >
-                              <Edit3 className="w-4 h-4" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => onSoftDeleteActivity(act.id)}
-                              className="p-1.5 text-red-700 hover:text-red-900 rounded hover:bg-red-100/60"
-                              title="מחיקה רכה"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-            {filteredActivities.length > 0 && (
-              <tfoot>
-                <tr className="border-t-2 border-slate-300 bg-slate-100 text-xs font-bold text-slate-800">
-                  <td colSpan={4} className="py-3 px-4">
-                    סה״כ בשורות המוצגות ({filteredActivities.length} פעילויות):
-                  </td>
-                  <td className="py-3 px-4 font-mono tabular-nums text-sm text-slate-900">
-                    {formatAgorotToIls(
-                      filteredActivities.reduce(
-                        (acc, item) => acc + (item.estimatedBudgetAgorot || 0),
-                        0
-                      )
+                      </div>
                     )}
-                  </td>
-                  <td className="py-3 px-4" />
-                </tr>
-              </tfoot>
-            )}
-          </table>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     </div>

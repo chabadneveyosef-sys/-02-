@@ -8,6 +8,7 @@ import {
   Clock,
   CheckCircle2,
   AlertTriangle,
+  Edit3,
 } from 'lucide-react';
 import {
   AnnualActivityRecord,
@@ -346,12 +347,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           )}
         </section>
 
-        {/* תקציר מהתוכנית השנתית וקישור ישיר (5 עמודות) */}
+        {/* תקציר מהתוכנית השנתית וקישור ישיר (5 עמודות) — מוצג בשני טורים כתקציר */}
         <section className="lg:col-span-5 bg-white border border-slate-200 rounded-xl p-6 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
             <div className="flex items-center gap-2">
               <Calendar className="w-5 h-5 text-slate-800 shrink-0" />
-              <h2 className="text-lg font-bold text-slate-900">תקציר מהתוכנית השנתית</h2>
+              <h2 className="text-lg font-bold text-slate-900">תקציר מהתוכנית השנתית (שני טורים)</h2>
             </div>
             <button
               type="button"
@@ -363,45 +364,45 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </button>
           </div>
 
-          <div className="divide-y divide-slate-100">
-            {activeActivities.slice(0, 5).map((act) => {
+          <div className="grid grid-cols-2 gap-2.5">
+            {activeActivities.slice(0, 8).map((act) => {
               const status = computeAnnualActivityStatus(act);
               return (
                 <div
                   key={act.id}
                   onClick={() => onNavigateTab('annual_plan')}
-                  className="py-3 first:pt-1 last:pb-1 cursor-pointer hover:bg-slate-50/70 rounded-lg px-2 -mx-2 transition-colors flex items-start justify-between gap-3"
+                  className="p-2.5 border border-slate-200 hover:border-slate-400 rounded-xl cursor-pointer bg-slate-50/50 hover:bg-white transition-all flex items-start justify-between gap-2"
                 >
-                  <div className="space-y-0.5">
-                    <div className="font-bold text-slate-900 text-sm">{act.title}</div>
-                    <div className="text-xs text-slate-600">
-                      {act.hebrewDateDisplay} · <span className="font-mono">{act.gregorianDate}</span>
-                    </div>
-                    <div className="text-[11px] text-slate-500">
-                      {act.category} · {act.locationName || 'חסר מיקום'} · אחראי:{' '}
-                      {act.responsiblePerson || 'טרם שובץ'}
-                    </div>
+                  <div className="flex items-start gap-2 min-w-0 flex-1">
+                    <span
+                      className={`w-2 h-2 rounded-full shrink-0 mt-1.5 ${
+                        status === 'blue'
+                          ? 'bg-blue-600'
+                          : status === 'green'
+                          ? 'bg-emerald-600'
+                          : 'bg-red-600'
+                      }`}
+                    />
+                    <span className="font-bold text-slate-900 text-xs leading-snug break-words">
+                      {act.title}
+                    </span>
                   </div>
 
-                  <div className="shrink-0 text-xs font-semibold">
-                    {status === 'blue' && (
-                      <span className="inline-flex items-center gap-1 text-blue-700">
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>בוצע</span>
-                      </span>
-                    )}
-                    {status === 'green' && (
-                      <span className="inline-flex items-center gap-1 text-emerald-700">
-                        <Clock className="w-3.5 h-3.5" />
-                        <span>תקין</span>
-                      </span>
-                    )}
-                    {status === 'red' && (
-                      <span className="inline-flex items-center gap-1 text-red-600">
-                        <AlertTriangle className="w-3.5 h-3.5" />
-                        <span>חסר פרטים</span>
-                      </span>
-                    )}
+                  <div className="relative group/btn shrink-0">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onNavigateTab('annual_plan');
+                      }}
+                      className="p-1.5 bg-white border border-slate-200 rounded-md text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors flex items-center justify-center"
+                      aria-label="עריכה ופירוט"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                    </button>
+                    <span className="pointer-events-none absolute bottom-full left-0 mb-1.5 hidden group-hover/btn:block whitespace-nowrap rounded bg-slate-900 px-2 py-1 text-[11px] font-medium text-white shadow-md z-30">
+                      עריכה ופירוט בתוכנית השנתית
+                    </span>
                   </div>
                 </div>
               );
@@ -414,7 +415,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               onClick={() => onNavigateTab('annual_plan')}
               className="w-full py-2 px-4 bg-slate-100 hover:bg-slate-200 text-slate-900 text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-1.5"
             >
-              <span>צפה בכל האירועים והחודשים בתוכנית השנתית</span>
+              <span>צפה בתוכנית השנתית המלאה ובסרגל הפירוט</span>
               <ArrowLeft className="w-3.5 h-3.5" />
             </button>
           </div>

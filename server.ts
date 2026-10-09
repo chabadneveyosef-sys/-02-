@@ -108,6 +108,12 @@ async function startServer() {
       server: { middlewareMode: true },
       appType: 'spa',
     });
+    app.use((req, _res, next) => {
+      if (req.url === '/' || req.url?.startsWith('/index.html')) {
+        vite.moduleGraph.invalidateAll();
+      }
+      next();
+    });
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');

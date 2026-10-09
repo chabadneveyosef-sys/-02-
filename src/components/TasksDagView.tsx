@@ -13,6 +13,8 @@ import {
   LayoutDashboard,
   Smartphone,
   Calendar,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { TaskNodeRecord, ReminderChannel } from '../types/erp';
 import {
@@ -76,6 +78,8 @@ export const TasksDagView: React.FC<TasksDagViewProps> = ({
   const [showForm, setShowForm] = useState(false);
   const [taskDisplayMode, setTaskDisplayMode] = useState<'two_columns' | 'table'>('two_columns');
   const [taskSideFilter, setTaskSideFilter] = useState<string>('all'); // 'all' | 'open' | 'completed' | 'critical' | rootTaskId
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [expandedTaskIds, setExpandedTaskIds] = useState<string[]>([]);
   const [anchorStartDate, setAnchorStartDate] = useState(
     new Date().toISOString().slice(0, 10)
   );
@@ -119,6 +123,14 @@ export const TasksDagView: React.FC<TasksDagViewProps> = ({
 
   // Root tasks are tasks that have no parentId, or whose parentId is an AnnualActivity (not another task in activeTasks)
   const rootTasks = activeTasks.filter((t) => !t.parentId || !taskIdsSet.has(t.parentId));
+  const selectedTask =
+    activeTasks.find((t) => t.id === selectedTaskId) || rootTasks[0] || activeTasks[0] || null;
+
+  const toggleExpandedTask = (id: string) => {
+    setExpandedTaskIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
 
   // הכנת קלט לניתוח DAG ו-CPM
   const dagInputs: DagTaskInput[] = activeTasks.map((t) => {
@@ -1052,9 +1064,9 @@ export const TasksDagView: React.FC<TasksDagViewProps> = ({
       )}
 
       {/* פריסת תכנון משימות: סרגל ניווט בצד + סידור משימות בשני טורים כדי שהשורה לא תהיה רחבה מידי */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* סרגל ניווט בצד למשימות ופרויקטים (3 עמודות) */}
-        <aside className="lg:col-span-3 bg-white border border-slate-300/90 rounded-xl p-4 space-y-4 lg:sticky lg:top-20">
+      <div className="grid grid-cols-1 sm:grid-cols-12 gap-5 items-start">
+        {/* סרגל ניווט בצד למשימות ופרויקטים (4 עמודות) */}
+        <aside className="sm:col-span-4 lg:col-span-3 bg-white border border-slate-300/90 rounded-xl p-4 space-y-4 sm:sticky sm:top-20">
           <div className="border-b border-slate-200 pb-3">
             <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
               <FolderKanban className="w-4 h-4 text-blue-800" />
@@ -1090,6 +1102,70 @@ export const TasksDagView: React.FC<TasksDagViewProps> = ({
               תצוגת טבלה
             </button>
           </div>
+
+          {/* פירוט משימה שנבחרה בסרגל הצד */}
+          {selectedTask && (
+            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/90 space-y-2.5 text-xs">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <span className="text-[11px] font-bold text-blue-800 block">
+                    פירוט משימה שנבחרה:
+                  </span>
+                  <h4 className="text-sm font-bold text-slate-900 leading-snug mt-0.5">
+                    {selectedTask.title}
+                  </h4>
+                </div>
+                {canWrite && (
+                  <button
+                    type="button"
+                    onClick={() => onToggleTaskCompleted(selectedTask)}
+                    className="p-1 text-slate-700 hover:text-slate-900"
+                    title={selectedTask.isCompleted ? 'סמן כלא בוצע' : 'סמן משימה כבוצעה'}
+                  >
+                    {selectedTask.isCompleted ? (
+                      <CheckSquare className="w-4 h-4 text-emerald-700" />
+                    ) : (
+                      <Square className="w-4 h-4 text-slate-500" />
+                    )}
+                  </button>
+                )}
+              </div>
+
+              <div className="space-y-1.5 pt-1 border-t border-slate-200/80 text-slate-700">
+                <div>
+                  <span className="text-slate-500">תאריך יעד: </span>
+                  <strong className="text-slate-900">
+                    {selectedTask.hebrewDateStr || selectedTask.targetDate || 'פרויקט מתמשך'}
+                  </strong>
+                </div>
+                <div>
+                  <span className="text-slate-500">אחראי: </span>
+                  <strong className="text-slate-900">
+                    {selectedTask.assignee || 'טרם הוגדר'}
+                  </strong>{' '}
+                  · משך: <strong>{selectedTask.durationDays} ימים</strong>
+                </div>
+                {selectedTask.strategicGoal && (
+                  <div>
+                    <span className="text-slate-500">מטרה אסטרטגית: </span>
+                    <span className="text-slate-900">{selectedTask.strategicGoal}</span>
+                  </div>
+                )}
+                {selectedTask.successCriteria && (
+                  <div>
+                    <span className="text-slate-500">מבחן הצלחה: </span>
+                    <span className="text-slate-900">{selectedTask.successCriteria}</span>
+                  </div>
+                )}
+                {cpmResult.schedules[selectedTask.id] && (
+                  <div className="font-mono text-[11px] text-slate-600 pt-1">
+                    התחלה מומלצת: {cpmResult.schedules[selectedTask.id].recommendedStartDate}
+                    {cpmResult.schedules[selectedTask.id].isCritical ? ' · ★ במסלול קריטי' : ''}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           <div className="space-y-1">
             <div className="text-[11px] font-bold text-slate-500 px-2 pb-1">סינון לפי מצב:</div>
@@ -1181,8 +1257,8 @@ export const TasksDagView: React.FC<TasksDagViewProps> = ({
           )}
         </aside>
 
-        {/* אזור תוכן המשימות המרכזי (9 עמודות) */}
-        <div className="lg:col-span-9 space-y-4">
+        {/* אזור תוכן המשימות המרכזי (8-9 עמודות) */}
+        <div className="sm:col-span-8 lg:col-span-9 space-y-4">
           {activeTasks.length === 0 ? (
             <div className="bg-white border border-slate-300/90 rounded-xl p-10 text-center space-y-3">
               <div className="text-base font-bold text-slate-900">
@@ -1203,8 +1279,8 @@ export const TasksDagView: React.FC<TasksDagViewProps> = ({
               )}
             </div>
           ) : taskDisplayMode === 'two_columns' ? (
-            /* סידור המשימות בשני טורים מאוזנים — כל שורת משימה קומפקטית וברורה ללא רוחב מופרז */
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 items-start">
+            /* סידור המשימות בשני טורים מאוזנים — כל שורת משימה קומפקטית (רק כותרת וכפתורי עריכה) */
+            <div className="grid grid-cols-2 gap-3.5 items-start">
               {rootTasks
                 .filter((rt) => {
                   if (taskSideFilter === 'all') return true;
@@ -1238,6 +1314,8 @@ export const TasksDagView: React.FC<TasksDagViewProps> = ({
                     const sched = cpmResult.schedules[node.id];
                     const channels = parseTaskChannels(node.reminderChannelsJson);
                     const daysBefore = node.reminderDaysBefore ?? 2;
+                    const isTaskSelected = selectedTask?.id === node.id;
+                    const isTaskExpanded = expandedTaskIds.includes(node.id);
 
                     let deps: string[] = [];
                     try {
@@ -1251,195 +1329,253 @@ export const TasksDagView: React.FC<TasksDagViewProps> = ({
                         key={node.id}
                         className={`${
                           depth > 0
-                            ? 'mt-3 mr-4 pr-3.5 border-r-2 border-blue-300/80 space-y-2'
-                            : 'space-y-3'
+                            ? 'mt-2.5 mr-4 pr-3 border-r-2 border-blue-300/80 space-y-2'
+                            : 'space-y-2.5'
                         }`}
                       >
                         <div
-                          className={`p-3.5 rounded-xl border transition-colors ${
-                            depth === 0
-                              ? 'bg-white border-slate-300/90 shadow-xs'
-                              : 'bg-slate-50/90 border-slate-200/90'
+                          onClick={() => setSelectedTaskId(node.id)}
+                          className={`p-3 rounded-xl border transition-all cursor-pointer ${
+                            isTaskSelected
+                              ? 'bg-white border-slate-900 ring-2 ring-slate-900/10 shadow-xs'
+                              : depth === 0
+                              ? 'bg-white border-slate-300/90 hover:border-slate-400'
+                              : 'bg-slate-50/90 border-slate-200/90 hover:border-slate-300'
                           }`}
                         >
-                          {/* שורה עליונה: סימון ביצוע + כותרת + כפתור + לתת-משימה + מחיקה */}
+                          {/* שורת תקציר בלבד: סימון ביצוע + מלוא הכותרת + כפתורי אייקון עם הסבר צף במעבר עכבר */}
                           <div className="flex items-start justify-between gap-2">
-                            <div className="flex items-start gap-2.5">
+                            <div className="flex items-start gap-2 min-w-0 flex-1">
+                              <div className="relative group/chk shrink-0 mt-0.5">
+                                <button
+                                  type="button"
+                                  disabled={!canWrite}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onToggleTaskCompleted(node);
+                                  }}
+                                  className="text-slate-700 hover:text-slate-900 flex items-center justify-center"
+                                  aria-label={node.isCompleted ? 'סמן כלא בוצע' : 'סמן משימה כבוצעה'}
+                                >
+                                  {node.isCompleted ? (
+                                    <CheckSquare className="w-4 h-4 text-emerald-700" />
+                                  ) : (
+                                    <Square className="w-4 h-4 text-slate-500" />
+                                  )}
+                                </button>
+                                <span className="pointer-events-none absolute bottom-full right-0 mb-1.5 hidden group-hover/chk:block whitespace-nowrap rounded bg-slate-900 px-2 py-1 text-[11px] font-medium text-white shadow-md z-30">
+                                  {node.isCompleted ? 'סמן כלא בוצע' : 'סמן משימה כבוצעה'}
+                                </span>
+                              </div>
                               <button
                                 type="button"
-                                disabled={!canWrite}
-                                onClick={() => onToggleTaskCompleted(node)}
-                                className="mt-0.5 text-slate-700 hover:text-slate-900 shrink-0"
-                                title={node.isCompleted ? 'סמן כלא בוצע' : 'סמן משימה כבוצעה'}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedTaskId(node.id);
+                                  toggleExpandedTask(node.id);
+                                }}
+                                className="flex items-start gap-1.5 text-right min-w-0 flex-1"
                               >
-                                {node.isCompleted ? (
-                                  <CheckSquare className="w-5 h-5 text-emerald-700" />
-                                ) : (
-                                  <Square className="w-5 h-5 text-slate-500" />
+                                {depth > 0 && (
+                                  <span className="text-blue-700 font-bold text-xs shrink-0 mt-0.5">↳</span>
                                 )}
+                                {node.isProject && (
+                                  <FolderKanban className="w-3.5 h-3.5 text-amber-700 shrink-0 mt-0.5" />
+                                )}
+                                <span
+                                  className={`font-bold text-slate-900 text-sm leading-snug break-words ${
+                                    node.isCompleted ? 'line-through text-slate-400' : ''
+                                  }`}
+                                >
+                                  {node.title}
+                                </span>
                               </button>
-                              <div>
-                                <div className="flex flex-wrap items-center gap-1.5">
-                                  {depth > 0 && (
-                                    <span className="text-blue-700 font-bold text-xs">↳</span>
-                                  )}
-                                  {node.isProject && (
-                                    <FolderKanban className="w-4 h-4 text-amber-700 shrink-0" />
-                                  )}
-                                  <span
-                                    className={`font-bold text-slate-900 text-sm leading-snug ${
-                                      node.isCompleted ? 'line-through text-slate-400' : ''
-                                    }`}
-                                  >
-                                    {node.title}
-                                  </span>
-                                </div>
-                                {node.assignee && (
-                                  <div className="text-xs text-slate-600 mt-0.5">
-                                    אחראי: <strong>{node.assignee}</strong> · משך: {node.durationDays} ימים
-                                  </div>
-                                )}
-                                {node.strategicGoal && (
-                                  <div className="text-xs text-slate-700 mt-1 leading-relaxed">
-                                    <strong>מטרה:</strong> {node.strategicGoal}
-                                  </div>
-                                )}
-                                {node.successCriteria && (
-                                  <div className="text-xs text-slate-600 mt-0.5 leading-relaxed">
-                                    <strong>מבחן הצלחה:</strong> {node.successCriteria}
-                                  </div>
-                                )}
-                              </div>
                             </div>
 
-                            {canWrite && (
-                              <div className="flex items-center gap-1 shrink-0">
+                            <div
+                              className="flex items-center gap-1 shrink-0"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {canWrite && (
+                                <>
+                                  <div className="relative group/btn">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenAddSubtask(node)}
+                                      className="p-1.5 bg-slate-900 text-white rounded-md hover:bg-slate-800 transition-colors flex items-center justify-center"
+                                      aria-label="הוסף תת-משימה"
+                                    >
+                                      <Plus className="w-3.5 h-3.5" />
+                                    </button>
+                                    <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover/btn:block whitespace-nowrap rounded bg-slate-900 px-2 py-1 text-[11px] font-medium text-white shadow-md z-30">
+                                      הוסף תת-משימה
+                                    </span>
+                                  </div>
+
+                                  <div className="relative group/btn">
+                                    <button
+                                      type="button"
+                                      onClick={() => onSoftDeleteTask(node.id)}
+                                      className="p-1.5 text-red-600 hover:bg-red-50 border border-slate-200 bg-white rounded-md transition-colors flex items-center justify-center"
+                                      aria-label="מחיקת משימה"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                    <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover/btn:block whitespace-nowrap rounded bg-slate-900 px-2 py-1 text-[11px] font-medium text-white shadow-md z-30">
+                                      מחיקת משימה
+                                    </span>
+                                  </div>
+                                </>
+                              )}
+                              <div className="relative group/btn">
                                 <button
                                   type="button"
-                                  onClick={() => handleOpenAddSubtask(node)}
-                                  className="px-2 py-1 text-xs font-bold bg-slate-900 text-white rounded-md hover:bg-slate-800 flex items-center gap-1"
-                                  title="הוסף תת-משימה נוספת (+)"
+                                  onClick={() => {
+                                    setSelectedTaskId(node.id);
+                                    toggleExpandedTask(node.id);
+                                  }}
+                                  className="p-1.5 text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-md transition-colors flex items-center justify-center"
+                                  aria-label={isTaskExpanded ? 'סגור פירוט משימה' : 'פתח פירוט משימה'}
                                 >
-                                  <Plus className="w-3.5 h-3.5" />
-                                  <span>תת-משימה</span>
+                                  {isTaskExpanded ? (
+                                    <ChevronUp className="w-3.5 h-3.5" />
+                                  ) : (
+                                    <ChevronDown className="w-3.5 h-3.5" />
+                                  )}
                                 </button>
-                                <button
-                                  type="button"
-                                  onClick={() => onSoftDeleteTask(node.id)}
-                                  className="p-1 text-red-600 hover:bg-red-50 rounded"
-                                  title="מחיקה רכה"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
+                                <span className="pointer-events-none absolute bottom-full left-0 mb-1.5 hidden group-hover/btn:block whitespace-nowrap rounded bg-slate-900 px-2 py-1 text-[11px] font-medium text-white shadow-md z-30">
+                                  {isTaskExpanded ? 'סגור פירוט משימה' : 'פתח פירוט משימה'}
+                                </span>
                               </div>
-                            )}
+                            </div>
                           </div>
 
-                          {/* תאריך ביצוע בלוח עברי + תזכורות */}
-                          <div className="mt-3 pt-2.5 border-t border-slate-200/80 space-y-2 text-xs">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <span className="font-bold text-slate-800 flex items-center gap-1">
-                                <Calendar className="w-3.5 h-3.5 text-blue-800" />
-                                <span>תאריך ביצוע (עברי):</span>
-                              </span>
-                              <HebrewDatePicker
-                                compact
-                                disabled={!canWrite}
-                                allowClear
-                                clearLabel="ללא תאריך (פרויקט)"
-                                value={
-                                  node.targetDate
-                                    ? fromGregorianDate(node.targetDate).triplet
-                                    : null
-                                }
-                                onChange={(_tr, conv) =>
-                                  handleUpdateTaskExecutionDateAndReminders(
-                                    node,
-                                    conv.gregorianIso
-                                  )
-                                }
-                                onClear={() =>
-                                  handleUpdateTaskExecutionDateAndReminders(node, '')
-                                }
-                              />
-                            </div>
+                          {/* פירוט המשימה מופיע רק בפתיחת המשימה (או בסרגל הצד) */}
+                          {isTaskExpanded && (
+                            <div
+                              className="mt-3 pt-2.5 border-t border-slate-200/80 space-y-2 text-xs"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {node.assignee && (
+                                <div className="text-slate-600">
+                                  אחראי: <strong>{node.assignee}</strong> · משך: {node.durationDays} ימים
+                                </div>
+                              )}
+                              {node.strategicGoal && (
+                                <div className="text-slate-700 leading-relaxed">
+                                  <strong>מטרה:</strong> {node.strategicGoal}
+                                </div>
+                              )}
+                              {node.successCriteria && (
+                                <div className="text-slate-600 leading-relaxed">
+                                  <strong>מבחן הצלחה:</strong> {node.successCriteria}
+                                </div>
+                              )}
 
-                            {/* ערוצי תזכורת ומועד שליחה */}
-                            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-                              <div className="flex items-center gap-1 text-[11px]">
-                                <Bell className="w-3 h-3 text-amber-600" />
-                                <select
+                              <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                                <span className="font-bold text-slate-800 flex items-center gap-1">
+                                  <Calendar className="w-3.5 h-3.5 text-blue-800" />
+                                  <span>תאריך ביצוע (עברי):</span>
+                                </span>
+                                <HebrewDatePicker
+                                  compact
                                   disabled={!canWrite}
-                                  value={daysBefore}
-                                  onChange={(e) =>
+                                  allowClear
+                                  clearLabel="ללא תאריך (פרויקט)"
+                                  value={
+                                    node.targetDate
+                                      ? fromGregorianDate(node.targetDate).triplet
+                                      : null
+                                  }
+                                  onChange={(_tr, conv) =>
                                     handleUpdateTaskExecutionDateAndReminders(
                                       node,
-                                      node.targetDate || '',
-                                      Number(e.target.value),
-                                      channels
+                                      conv.gregorianIso
                                     )
                                   }
-                                  className="px-1.5 py-0.5 text-[11px] border border-slate-300 rounded bg-white text-slate-800"
-                                >
-                                  <option value={0}>תזכורת ביום הביצוע</option>
-                                  <option value={1}>יום לפני + ביום הביצוע</option>
-                                  <option value={2}>יומיים לפני + ביום הביצוע</option>
-                                  <option value={3}>3 ימים לפני + ביום הביצוע</option>
-                                  <option value={7}>שבוע לפני + ביום הביצוע</option>
-                                </select>
+                                  onClear={() =>
+                                    handleUpdateTaskExecutionDateAndReminders(node, '')
+                                  }
+                                />
                               </div>
 
-                              <div className="flex flex-wrap items-center gap-1">
-                                {ALL_CHANNELS.map((ch) => {
-                                  const active = channels.includes(ch);
-                                  const Icon = CHANNEL_META[ch].icon;
-                                  return (
-                                    <button
-                                      key={ch}
-                                      type="button"
-                                      disabled={!canWrite}
-                                      onClick={() => {
-                                        const next = active
-                                          ? channels.filter((c) => c !== ch)
-                                          : [...channels, ch];
-                                        handleUpdateTaskExecutionDateAndReminders(
-                                          node,
-                                          node.targetDate || '',
-                                          daysBefore,
-                                          next
-                                        );
-                                      }}
-                                      className={`px-1.5 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors ${
-                                        active
-                                          ? 'bg-slate-900 text-white border-slate-900'
-                                          : 'bg-white text-slate-500 border-slate-200'
-                                      }`}
-                                    >
-                                      <Icon className="w-2.5 h-2.5" />
-                                      <span>{CHANNEL_META[ch].label}</span>
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                            </div>
+                              {/* ערוצי תזכורת ומועד שליחה */}
+                              <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                                <div className="flex items-center gap-1 text-[11px]">
+                                  <Bell className="w-3 h-3 text-amber-600" />
+                                  <select
+                                    disabled={!canWrite}
+                                    value={daysBefore}
+                                    onChange={(e) =>
+                                      handleUpdateTaskExecutionDateAndReminders(
+                                        node,
+                                        node.targetDate || '',
+                                        Number(e.target.value),
+                                        channels
+                                      )
+                                    }
+                                    className="px-1.5 py-0.5 text-[11px] border border-slate-300 rounded bg-white text-slate-800"
+                                  >
+                                    <option value={0}>תזכורת ביום הביצוע</option>
+                                    <option value={1}>יום לפני + ביום הביצוע</option>
+                                    <option value={2}>יומיים לפני + ביום הביצוע</option>
+                                    <option value={3}>3 ימים לפני + ביום הביצוע</option>
+                                    <option value={7}>שבוע לפני + ביום הביצוע</option>
+                                  </select>
+                                </div>
 
-                            {/* CPM & Dependencies compact footer */}
-                            <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-[11px] text-slate-600">
-                              <div>
-                                {sched && (
-                                  <span className="font-mono">
-                                    התחלה מומלצת: {sched.recommendedStartDate}
-                                    {sched.isCritical ? ' · ★ קריטי (CPM)' : ''}
+                                <div className="flex flex-wrap items-center gap-1">
+                                  {ALL_CHANNELS.map((ch) => {
+                                    const active = channels.includes(ch);
+                                    const Icon = CHANNEL_META[ch].icon;
+                                    return (
+                                      <button
+                                        key={ch}
+                                        type="button"
+                                        disabled={!canWrite}
+                                        onClick={() => {
+                                          const next = active
+                                            ? channels.filter((c) => c !== ch)
+                                            : [...channels, ch];
+                                          handleUpdateTaskExecutionDateAndReminders(
+                                            node,
+                                            node.targetDate || '',
+                                            daysBefore,
+                                            next
+                                          );
+                                        }}
+                                        className={`px-1.5 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors ${
+                                          active
+                                            ? 'bg-slate-900 text-white border-slate-900'
+                                            : 'bg-white text-slate-500 border-slate-200'
+                                        }`}
+                                      >
+                                        <Icon className="w-2.5 h-2.5" />
+                                        <span>{CHANNEL_META[ch].label}</span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+
+                              {/* CPM & Dependencies compact footer */}
+                              <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-[11px] text-slate-600">
+                                <div>
+                                  {sched && (
+                                    <span className="font-mono">
+                                      התחלה מומלצת: {sched.recommendedStartDate}
+                                      {sched.isCritical ? ' · ★ קריטי (CPM)' : ''}
+                                    </span>
+                                  )}
+                                </div>
+                                {deps.length > 0 && (
+                                  <span>
+                                    תלוי ב-{deps.length} משימות קודמות
                                   </span>
                                 )}
                               </div>
-                              {deps.length > 0 && (
-                                <span>
-                                  תלוי ב-{deps.length} משימות קודמות
-                                </span>
-                              )}
                             </div>
-                          </div>
+                          )}
 
                           {/* טופס הוספת תת-משימה (+) מתחת לצומת הנוכחי */}
                           {addingSubtaskUnderId === node.id && canWrite && (
